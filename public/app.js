@@ -481,7 +481,7 @@ function renderMessageHtml(msg) {
     const text = Array.isArray(msg.content)
       ? msg.content.map(b => b.text || '').join('')
       : String(msg.content);
-    return `${daySep}<div class="message user"><div class="message-bubble">${escapeHtml(text)}</div>${time}</div>`;
+    return `${daySep}<div class="message user"><div class="message-bubble">${escapeHtml(text)} ${time}</div></div>`;
   }
 
   if (msg.type === 'assistant' || msg.type === 'assistant-streaming') {
@@ -506,14 +506,14 @@ function renderMessageHtml(msg) {
       html += `<div class="tool-summary-inline">${toolCards.length} tool${toolCards.length > 1 ? 's' : ''} used</div>`;
     }
     html += renderMarkdown(fullText);
-    html += `</div>${time}</div>`;
+    html += ` ${time}</div></div>`;
     return html;
   }
 
   if (msg.type === 'result') return '';
 
   if (msg.type === 'error') {
-    return `${daySep}<div class="message assistant"><div class="message-bubble" style="border-color:var(--red);color:var(--red);">Error: ${escapeHtml(msg.error)}</div>${time}</div>`;
+    return `${daySep}<div class="message assistant"><div class="message-bubble" style="border-color:var(--red);color:var(--red);">Error: ${escapeHtml(msg.error)} ${time}</div></div>`;
   }
 
   return '';

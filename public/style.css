@@ -551,15 +551,19 @@ html, body {
 }
 
 .msg-time {
-  display: block;
+  display: inline;
   font-size: 10px;
-  color: var(--text-muted);
-  margin-top: 4px;
-  padding: 0 4px;
+  color: rgba(255,255,255,0.35);
+  margin-left: 8px;
+  white-space: nowrap;
+  vertical-align: bottom;
+  float: right;
+  margin-top: 6px;
 }
 
-.message.user .msg-time { text-align: right; }
-.message.assistant .msg-time { text-align: left; }
+.message.assistant .msg-time {
+  color: var(--text-muted);
+}
 
 /* --- Tool Summary (compact) --- */
 .tool-summary {
