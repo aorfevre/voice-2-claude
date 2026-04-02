@@ -485,8 +485,16 @@ function renderMessageHtml(msg) {
   }
 
   if (msg.type === 'assistant' || msg.type === 'assistant-streaming') {
-    const textParts = msg.textParts || [];
-    const toolCards = msg.toolCards || [];
+    // If loaded from DB, convert content blocks to textParts/toolCards
+    let textParts = msg.textParts;
+    let toolCards = msg.toolCards;
+    if (!textParts && msg.content) {
+      const parsed = parseAssistantContent(msg.content);
+      textParts = parsed.textParts;
+      toolCards = parsed.toolCards;
+    }
+    textParts = textParts || [];
+    toolCards = toolCards || [];
 
     // Combine all text parts, filter empty
     const fullText = textParts.filter(t => t && t.trim()).join('\n\n');
