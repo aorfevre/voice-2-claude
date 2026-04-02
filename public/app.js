@@ -334,6 +334,7 @@ function renderSidebarHtml() {
             ${!s.running && s.messageCount ? s.messageCount + ' messages' : ''}
             ${!s.running && !s.messageCount ? 'Empty' : ''}
           </div>
+          <button class="session-rename" data-rename="${s.id}" title="Rename">&#9998;</button>
           <button class="session-delete" data-delete="${s.id}" title="Delete">&times;</button>
         </div>
       `).join('')}
@@ -521,6 +522,18 @@ function bindSidebarEvents() {
     el.addEventListener('click', (e) => {
       if (e.target.closest('.session-delete')) return;
       openSession(el.dataset.id);
+    });
+  });
+
+  document.querySelectorAll('.session-rename[data-rename]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = el.dataset.rename;
+      const session = sessions.find(s => s.id === id);
+      const name = prompt('Rename session:', session?.name || '');
+      if (name !== null && name.trim()) {
+        renameSession(id, name.trim());
+      }
     });
   });
 

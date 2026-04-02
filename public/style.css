@@ -126,6 +126,24 @@ html, body {
   50% { opacity: 0.4; }
 }
 
+.session-rename {
+  position: absolute;
+  top: 10px;
+  right: 32px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.session-item:hover .session-rename { opacity: 1; }
+.session-rename:hover { color: var(--blue); background: rgba(88, 166, 255, 0.1); }
+
 .session-delete {
   position: absolute;
   top: 10px;
