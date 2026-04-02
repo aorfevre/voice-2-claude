@@ -210,6 +210,14 @@ async function fetchSessions() {
   try {
     const res = await fetch('/api/sessions');
     sessions = await res.json();
+    // If current session stopped running, clear streaming state
+    if (currentSessionId) {
+      const current = sessions.find(s => s.id === currentSessionId);
+      if (current && !current.running && isStreaming) {
+        isStreaming = false;
+        streamingText = '';
+      }
+    }
     renderSidebar();
   } catch {}
 }
@@ -283,6 +291,13 @@ async function loadSessionMessages(id) {
     const data = await res.json();
     if (data.messages && data.messages.length > 0) {
       sessionMessages.set(id, data.messages);
+    }
+    // Sync running state from server (authoritative)
+    const s = sessions.find(s => s.id === id);
+    if (s) {
+      s.running = data.running;
+      isStreaming = data.running;
+      if (!data.running) streamingText = '';
     }
   } catch {}
 }
