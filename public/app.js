@@ -367,10 +367,26 @@ function renderChatHtml() {
 }
 
 function renderEmptyHtml() {
+  if (pendingProfile) {
+    // User clicked + Work or + Perso — show input for first message
+    const label = pendingProfile.charAt(0).toUpperCase() + pendingProfile.slice(1);
+    return `
+      <div class="chat-empty">
+        <div class="chat-empty-icon">&#9678;</div>
+        <div class="chat-empty-text">New ${label} session</div>
+      </div>
+      <div class="input-area">
+        <div class="input-row">
+          <textarea id="chat-input" rows="1" placeholder="What do you want to work on?"></textarea>
+          <button class="btn-send" id="btn-send" title="Send">&#8593;</button>
+        </div>
+      </div>
+    `;
+  }
   return `
     <div class="chat-empty">
       <div class="chat-empty-icon">&#9678;</div>
-      <div class="chat-empty-text">Select or create a session to start</div>
+      <div class="chat-empty-text">Select or create a session</div>
     </div>
   `;
 }
