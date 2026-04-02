@@ -101,16 +101,25 @@ html, body {
 
 .session-item:hover { background: var(--bg-tertiary); }
 .session-item.active { background: var(--bg-tertiary); border-color: var(--border); }
-.session-item.attention { border-color: rgba(248, 81, 73, 0.4); background: rgba(248, 81, 73, 0.05); }
+.session-item.attention {
+  border-color: var(--red);
+  background: rgba(248, 81, 73, 0.15);
+  box-shadow: inset 3px 0 0 var(--red);
+}
+
+.session-item.attention .session-item-name {
+  color: var(--red);
+  font-weight: 700;
+}
 
 .attention-dot {
   display: inline-block;
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--red);
-  box-shadow: 0 0 6px rgba(248, 81, 73, 0.5);
-  animation: pulse 1.5s infinite;
+  box-shadow: 0 0 8px rgba(248, 81, 73, 0.7);
+  animation: pulse 1s infinite;
   margin-right: 4px;
 }
 
