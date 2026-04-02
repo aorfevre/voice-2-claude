@@ -295,7 +295,8 @@ function abortSession(id) {
 function render() {
   const isMobile = window.innerWidth < 768;
 
-  if (isMobile && !currentSessionId && !showMobileSidebar) {
+  // On mobile, show sidebar unless user clicked + Work/Perso (pendingProfile set)
+  if (isMobile && !currentSessionId && !showMobileSidebar && !pendingProfile) {
     showMobileSidebar = true;
   }
 
