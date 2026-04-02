@@ -612,6 +612,7 @@ function escapeHtml(str) {
 // --- Init ---
 
 connectWs();
-fetchSessions();
+render(); // Initial render first
+fetchSessions().then(() => render()); // Re-render after sessions load
 
 window.addEventListener('resize', () => render());
