@@ -501,7 +501,7 @@ function renderMessageHtml(msg) {
     if (!fullText && toolCards.length === 0) return daySep;
 
     // Show text with optional compact tool count
-    let html = `${daySep}<div class="message assistant"><div class="message-bubble">`;
+    let html = `${daySep}<div class="message assistant"><div class="message-content">`;
     if (toolCards.length > 0) {
       html += `<div class="tool-summary-inline">${toolCards.length} tool${toolCards.length > 1 ? 's' : ''} used</div>`;
     }
@@ -520,7 +520,7 @@ function renderMessageHtml(msg) {
 }
 
 function renderStreamingHtml() {
-  return `<div class="message assistant"><div class="message-bubble"><span class="streaming-cursor">${renderMarkdown(streamingText)}</span></div></div>`;
+  return `<div class="message assistant"><div class="message-content"><span class="streaming-cursor">${renderMarkdown(streamingText)}</span></div></div>`;
 }
 
 function renderToolCardHtml(tool) {
