@@ -37,8 +37,10 @@ function capturePane(target, lines) {
 }
 
 function captureLastLine(target) {
-  const raw = exec(`tmux capture-pane -p -t "${target}" -S -1`);
-  return raw ? stripAnsi(raw).trim() : '';
+  const raw = exec(`tmux capture-pane -p -t "${target}"`);
+  if (!raw) return '';
+  const lines = stripAnsi(raw).split('\n').filter(l => l.trim());
+  return lines.length > 0 ? lines[lines.length - 1].trim() : '';
 }
 
 function getPaneCwd(target) {
