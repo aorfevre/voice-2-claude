@@ -94,6 +94,18 @@ html, body {
 
 .session-item:hover { background: var(--bg-tertiary); }
 .session-item.active { background: var(--bg-tertiary); border: 1px solid var(--border); }
+.session-item.attention { border: 1px solid rgba(248, 81, 73, 0.4); background: rgba(248, 81, 73, 0.05); }
+
+.attention-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--red);
+  box-shadow: 0 0 6px rgba(248, 81, 73, 0.5);
+  animation: pulse 1.5s infinite;
+  margin-right: 4px;
+}
 
 .session-item-name {
   font-size: 14px;

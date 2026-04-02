@@ -14,6 +14,7 @@ let currentToolId = null;
 let currentToolName = 'Tool';
 let currentToolInput = '';
 let showMobileSidebar = false;
+const needsAttention = new Set(); // session IDs that finished and need user input
 
 // --- WebSocket ---
 
@@ -122,16 +123,18 @@ function handleWsMessage(msg) {
 
   if (msg.type === 'result') {
     finalizeStreaming(sid);
-    getMessages(sid).push({
-      type: 'result',
-      cost: msg.cost,
-      duration: msg.duration,
-    });
     isStreaming = false;
     streamingText = '';
     streamingToolCards = [];
     renderMessages();
     updateSessionRunning(sid, false);
+
+    // Notify if this session is not currently active
+    if (sid !== currentSessionId) {
+      needsAttention.add(sid);
+      renderSidebar();
+    }
+    notifySessionDone(sid);
     return;
   }
 
@@ -327,12 +330,13 @@ function renderSidebarHtml() {
     <div class="session-list" id="session-list">
       ${sessions.length === 0 ? '<div style="text-align:center;color:var(--text-muted);padding:40px 16px;font-size:14px;">No sessions yet.<br>Start one with the + New button.</div>' : ''}
       ${sessions.map(s => `
-        <div class="session-item ${s.id === currentSessionId ? 'active' : ''}" data-id="${s.id}">
-          <div class="session-item-name">${escapeHtml(s.name || 'Untitled')}</div>
+        <div class="session-item ${s.id === currentSessionId ? 'active' : ''} ${needsAttention.has(s.id) ? 'attention' : ''}" data-id="${s.id}">
+          <div class="session-item-name">${needsAttention.has(s.id) ? '<span class="attention-dot"></span> ' : ''}${escapeHtml(s.name || 'Untitled')}</div>
           <div class="session-item-meta">
             ${s.running ? '<span class="session-running-dot"></span> Running' : ''}
-            ${!s.running && s.messageCount ? s.messageCount + ' messages' : ''}
-            ${!s.running && !s.messageCount ? 'Empty' : ''}
+            ${!s.running && needsAttention.has(s.id) ? '<span style="color:var(--red)">Needs input</span>' : ''}
+            ${!s.running && !needsAttention.has(s.id) && s.messageCount ? s.messageCount + ' messages' : ''}
+            ${!s.running && !needsAttention.has(s.id) && !s.messageCount ? 'Empty' : ''}
           </div>
           <button class="session-rename" data-rename="${s.id}" title="Rename">&#9998;</button>
           <button class="session-delete" data-delete="${s.id}" title="Delete">&times;</button>
@@ -592,6 +596,7 @@ function submitInput() {
 
 async function openSession(id) {
   currentSessionId = id;
+  needsAttention.delete(id);
   showMobileSidebar = false;
   isStreaming = false;
   streamingText = '';
@@ -664,10 +669,44 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+// --- Notifications ---
+
+function notifySessionDone(sid) {
+  playNotificationSound();
+
+  // Browser notification
+  if (Notification.permission === 'granted') {
+    const session = sessions.find(s => s.id === sid);
+    const name = session?.name || 'Session';
+    new Notification('Claude finished', { body: `${name} needs your attention`, tag: sid });
+  }
+}
+
+function playNotificationSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.frequency.value = 880;
+    osc.type = 'sine';
+    gain.gain.value = 0.3;
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.3);
+  } catch (e) {}
+}
+
 // --- Init ---
 
 connectWs();
-render(); // Initial render first
-fetchSessions().then(() => render()); // Re-render after sessions load
+render();
+fetchSessions().then(() => render());
+
+// Request browser notification permission
+if ('Notification' in window && Notification.permission === 'default') {
+  Notification.requestPermission();
+}
 
 window.addEventListener('resize', () => render());
