@@ -395,8 +395,9 @@ function renderChatHtml() {
       ${isStreaming && streamingText ? renderStreamingHtml() : ''}
     </div>
     <div class="input-area">
+      <div id="attachments-preview" class="attachments-preview"></div>
       <div class="input-row">
-        <textarea id="chat-input" rows="1" placeholder="Send a message..." ${running ? 'disabled' : ''}></textarea>
+        <textarea id="chat-input" rows="2" placeholder="Send a message... (paste images here)" ${running ? 'disabled' : ''}></textarea>
         ${running
           ? '<button class="btn-abort" onclick="onAbort()" title="Stop">&#9632;</button>'
           : '<button class="btn-send" id="btn-send" title="Send">&#8593;</button>'}
@@ -594,6 +595,8 @@ function bindSidebarEvents() {
   });
 }
 
+let pendingAttachments = []; // { type: 'image', data: base64, name: string }
+
 function bindChatEvents() {
   const input = document.getElementById('chat-input');
   const sendBtn = document.getElementById('btn-send');
@@ -609,7 +612,26 @@ function bindChatEvents() {
     // Auto-resize textarea
     input.addEventListener('input', () => {
       input.style.height = 'auto';
-      input.style.height = Math.min(input.scrollHeight, 150) + 'px';
+      input.style.height = Math.min(input.scrollHeight, 300) + 'px';
+    });
+
+    // Paste handler for images and rich text
+    input.addEventListener('paste', (e) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          e.preventDefault();
+          const file = item.getAsFile();
+          const reader = new FileReader();
+          reader.onload = () => {
+            pendingAttachments.push({ type: 'image', data: reader.result, name: file.name || 'image.png' });
+            renderAttachments();
+          };
+          reader.readAsDataURL(file);
+        }
+      }
     });
 
     input.focus();
@@ -620,14 +642,35 @@ function bindChatEvents() {
   }
 }
 
+function renderAttachments() {
+  const el = document.getElementById('attachments-preview');
+  if (!el) return;
+  el.innerHTML = pendingAttachments.map((a, i) => `
+    <div class="attachment-thumb">
+      <img src="${a.data}" alt="${escapeHtml(a.name)}">
+      <button class="attachment-remove" onclick="removeAttachment(${i})">&times;</button>
+    </div>
+  `).join('');
+}
+
+window.removeAttachment = (idx) => {
+  pendingAttachments.splice(idx, 1);
+  renderAttachments();
+};
+
 function submitInput() {
   const input = document.getElementById('chat-input');
   if (!input) return;
   const text = input.value.trim();
-  if (!text) return;
+  if (!text && pendingAttachments.length === 0) return;
 
   input.value = '';
   input.style.height = 'auto';
+
+  // Include attachments with the message
+  const attachments = [...pendingAttachments];
+  pendingAttachments = [];
+  renderAttachments();
 
   if (currentSessionId) {
     sendMessage(text);
