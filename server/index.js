@@ -143,9 +143,10 @@ async function runQuery(sessionId, prompt, isResume) {
 
       const transformed = transformMessage(msg, sessionId);
       if (transformed) {
-        // Only store full messages (not streaming deltas)
+        // Persist full messages to DB (not streaming deltas)
         if (transformed.type === 'assistant' || transformed.type === 'user' || transformed.type === 'result') {
           session.messages.push(transformed);
+          db.addMessage(sessionId, transformed);
         }
         broadcastToSession(sessionId, transformed);
       }
@@ -153,6 +154,7 @@ async function runQuery(sessionId, prompt, isResume) {
       // Capture the Claude session ID from assistant or result messages
       if (msg.session_id) {
         session.claudeSessionId = msg.session_id;
+        db.setClaudeSessionId(sessionId, msg.session_id);
       }
     }
   } catch (err) {
@@ -222,6 +224,7 @@ app.post('/api/sessions', (req, res) => {
   const sessionName = name || prompt?.slice(0, 50) || 'New Session';
 
   db.createSession(sessionId, sessionName, sessionCwd);
+  db.setProfile(sessionId, sessionProfile);
 
   activeSessions.set(sessionId, {
     messages: [],
@@ -256,11 +259,12 @@ app.post('/api/sessions/:id/message', (req, res) => {
       return res.status(404).json({ error: 'Session not found' });
     }
     session = {
-      messages: [],
+      messages: db.getMessages(id),
       abortController: null,
       running: false,
       cwd: dbSession.cwd,
-      claudeSessionId: null,
+      claudeSessionId: dbSession.claude_session_id || null,
+      profile: dbSession.profile || 'perso',
     };
     activeSessions.set(id, session);
   }
@@ -269,8 +273,10 @@ app.post('/api/sessions/:id/message', (req, res) => {
     return res.status(409).json({ error: 'Session is currently running' });
   }
 
-  // Store user message server-side (client already shows it locally)
-  session.messages.push({ type: 'user', content: [{ type: 'text', text: prompt }], sessionId: id });
+  // Store user message
+  const userMsg = { type: 'user', content: [{ type: 'text', text: prompt }], sessionId: id };
+  session.messages.push(userMsg);
+  db.addMessage(id, userMsg);
 
   // Run query in background (resume if we have a Claude session ID)
   runQuery(id, prompt, !!session.claudeSessionId);
@@ -302,7 +308,9 @@ app.get('/api/sessions/:id/messages', (req, res) => {
   const { id } = req.params;
   const session = activeSessions.get(id);
   if (!session) {
-    return res.json({ messages: [], running: false });
+    // Load from DB even if not in active memory
+    const messages = db.getMessages(id);
+    return res.json({ messages, running: false });
   }
   res.json({ messages: session.messages, running: session.running });
 });
