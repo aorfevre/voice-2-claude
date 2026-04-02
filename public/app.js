@@ -193,7 +193,7 @@ function renderTerminal() {
         </div>
       </div>
     ` : ''}
-    <div class="terminal-output" id="terminal-output">${escapeHtml(terminalOutput)}</div>
+    <div class="terminal-output" id="terminal-output">${terminalOutput}</div>
     <div class="terminal-input-area">
       <div class="quick-actions">
         <button class="btn-quick btn-yes" onclick="sendInput('y')">Yes</button>
@@ -216,7 +216,7 @@ function renderTerminalOutput() {
   const el = document.getElementById('terminal-output');
   if (!el) return;
   const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
-  el.textContent = terminalOutput;
+  el.innerHTML = terminalOutput;
   if (wasAtBottom) el.scrollTop = el.scrollHeight;
 }
 

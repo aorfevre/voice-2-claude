@@ -1,4 +1,6 @@
 const { execSync, execFileSync } = require('child_process');
+const Convert = require('ansi-to-html');
+const ansiConvert = new Convert({ fg: '#c9d1d9', bg: '#010409', newline: true });
 
 function exec(cmd) {
   try {
@@ -30,9 +32,18 @@ function listSessions() {
   });
 }
 
-function capturePane(target, lines) {
-  const flag = lines ? `-S -${lines}` : '';
-  const raw = exec(`tmux capture-pane -p -t "${target}" ${flag}`);
+function capturePaneRaw(target) {
+  // Capture with escape sequences for color support
+  return exec(`tmux capture-pane -p -e -t "${target}"`) || '';
+}
+
+function capturePane(target) {
+  const raw = capturePaneRaw(target);
+  return raw ? ansiConvert.toHtml(raw) : '';
+}
+
+function capturePanePlain(target) {
+  const raw = exec(`tmux capture-pane -p -t "${target}"`);
   return raw ? stripAnsi(raw) : '';
 }
 
@@ -66,4 +77,4 @@ function createWindow(session, cmd) {
   }
 }
 
-module.exports = { listSessions, capturePane, captureLastLine, getPaneCwd, sendKeys, sendSpecialKey, createWindow, stripAnsi };
+module.exports = { listSessions, capturePane, capturePanePlain, captureLastLine, getPaneCwd, sendKeys, sendSpecialKey, createWindow, stripAnsi };

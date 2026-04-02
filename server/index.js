@@ -10,7 +10,7 @@ const hooks = require('./hooks');
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 9000;
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '..', 'public')));
@@ -115,22 +115,23 @@ wss.on('connection', (ws) => {
       const prev = subscribers.get(ws);
       if (prev?.interval) clearInterval(prev.interval);
 
-      let lastOutput = '';
+      let lastPlain = '';
       const interval = setInterval(() => {
-        const output = tmux.capturePane(msg.target);
-        const hash = simpleHash(output);
-        const { changed } = status.onOutputChange(msg.target, hash);
-        if (output !== lastOutput) {
-          lastOutput = output;
-          ws.send(JSON.stringify({ type: 'output', target: msg.target, output }));
+        const plain = tmux.capturePanePlain(msg.target);
+        const hash = simpleHash(plain);
+        status.onOutputChange(msg.target, hash);
+        if (plain !== lastPlain) {
+          lastPlain = plain;
+          const html = tmux.capturePane(msg.target);
+          ws.send(JSON.stringify({ type: 'output', target: msg.target, output: html }));
         }
         ws.send(JSON.stringify({ type: 'status', target: msg.target, status: status.getStatus(msg.target).status }));
       }, 500);
 
       subscribers.set(ws, { target: msg.target, interval });
 
-      const output = tmux.capturePane(msg.target);
-      ws.send(JSON.stringify({ type: 'output', target: msg.target, output }));
+      const html = tmux.capturePane(msg.target);
+      ws.send(JSON.stringify({ type: 'output', target: msg.target, output: html }));
     }
 
     if (msg.type === 'unsubscribe') {
@@ -159,8 +160,8 @@ setInterval(() => {
 
   for (const s of sessionList) {
     if (!subscribedTargets.has(s.target)) {
-      const output = tmux.capturePane(s.target);
-      status.onOutputChange(s.target, simpleHash(output));
+      const plain = tmux.capturePanePlain(s.target);
+      status.onOutputChange(s.target, simpleHash(plain));
     }
   }
 
