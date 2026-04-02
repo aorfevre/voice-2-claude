@@ -143,8 +143,9 @@ async function runQuery(sessionId, prompt, isResume) {
 
       const transformed = transformMessage(msg, sessionId);
       if (transformed) {
-        // Persist full messages to DB (not streaming deltas)
-        if (transformed.type === 'assistant' || transformed.type === 'user' || transformed.type === 'result') {
+        // Persist full messages to DB (not streaming deltas like text_delta, tool_delta)
+        const persistTypes = ['assistant', 'user', 'result', 'error'];
+        if (persistTypes.includes(transformed.type)) {
           session.messages.push(transformed);
           db.addMessage(sessionId, transformed);
         }
