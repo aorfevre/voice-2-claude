@@ -245,6 +245,7 @@ async function sendMessage(prompt) {
   getMessages(currentSessionId).push({
     type: 'user',
     content: [{ type: 'text', text: prompt }],
+    timestamp: new Date().toISOString(),
   });
   isStreaming = false;
   streamingText = '';
@@ -391,7 +392,7 @@ function renderChatHtml() {
       <div class="chat-header-name editable" onclick="onRenameSession()">${escapeHtml(name)}</div>
     </div>
     <div class="messages" id="messages">
-      ${msgs.map(m => renderMessageHtml(m)).join('')}
+      ${(() => { lastRenderedDay = ''; return msgs.map(m => renderMessageHtml(m)).join(''); })()}
       ${isStreaming && streamingText ? renderStreamingHtml() : ''}
     </div>
     <div class="input-area">
@@ -444,43 +445,75 @@ function renderEmptyHtml() {
   `;
 }
 
+function formatTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatDay(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (d.toDateString() === today.toDateString()) return 'Today';
+  if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  return d.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
+}
+
+// Track last day for separator insertion
+let lastRenderedDay = '';
+
 function renderMessageHtml(msg) {
+  let daySep = '';
+  if (msg.timestamp) {
+    const day = new Date(msg.timestamp).toDateString();
+    if (day !== lastRenderedDay) {
+      lastRenderedDay = day;
+      daySep = `<div class="day-separator"><span>${formatDay(msg.timestamp)}</span></div>`;
+    }
+  }
+
+  const time = msg.timestamp ? `<span class="msg-time">${formatTime(msg.timestamp)}</span>` : '';
+
   if (msg.type === 'user') {
     const text = Array.isArray(msg.content)
       ? msg.content.map(b => b.text || '').join('')
       : String(msg.content);
-    return `<div class="message user"><div class="message-bubble">${escapeHtml(text)}</div></div>`;
+    return `${daySep}<div class="message user"><div class="message-bubble">${escapeHtml(text)}</div>${time}</div>`;
   }
 
   if (msg.type === 'assistant' || msg.type === 'assistant-streaming') {
     const textParts = msg.textParts || [];
     const toolCards = msg.toolCards || [];
 
-    // Combine all text parts
-    const fullText = textParts.filter(t => t).join('\n\n');
+    // Combine all text parts, filter empty
+    const fullText = textParts.filter(t => t && t.trim()).join('\n\n');
 
     // If there's only tools and no text, show a compact tool summary
     if (!fullText && toolCards.length > 0) {
       const toolNames = [...new Set(toolCards.map(t => t.name))];
-      return `<div class="tool-summary">${toolNames.map(n => `<span class="tool-pill">${escapeHtml(n)}</span>`).join('')} <span class="tool-count">${toolCards.length} actions</span></div>`;
+      return `${daySep}<div class="tool-summary">${toolNames.map(n => `<span class="tool-pill">${escapeHtml(n)}</span>`).join('')} <span class="tool-count">${toolCards.length} actions</span></div>`;
     }
 
-    // If there's text, show it with an optional compact tool count
-    let html = '<div class="message assistant"><div class="message-bubble">';
+    // Skip completely empty messages
+    if (!fullText && toolCards.length === 0) return daySep;
+
+    // Show text with optional compact tool count
+    let html = `${daySep}<div class="message assistant"><div class="message-bubble">`;
     if (toolCards.length > 0) {
       html += `<div class="tool-summary-inline">${toolCards.length} tool${toolCards.length > 1 ? 's' : ''} used</div>`;
     }
     html += renderMarkdown(fullText);
-    html += '</div></div>';
+    html += `</div>${time}</div>`;
     return html;
   }
 
-  if (msg.type === 'result') {
-    return '';
-  }
+  if (msg.type === 'result') return '';
 
   if (msg.type === 'error') {
-    return `<div class="message assistant"><div class="message-bubble" style="border-color:var(--red);color:var(--red);">Error: ${escapeHtml(msg.error)}</div></div>`;
+    return `${daySep}<div class="message assistant"><div class="message-bubble" style="border-color:var(--red);color:var(--red);">Error: ${escapeHtml(msg.error)}</div>${time}</div>`;
   }
 
   return '';
@@ -543,6 +576,7 @@ function renderMessages() {
   if (!el) return;
 
   const msgs = getMessages(currentSessionId);
+  lastRenderedDay = '';
   let html = msgs.map(m => renderMessageHtml(m)).join('');
   if (isStreaming && streamingText) {
     html += renderStreamingHtml();

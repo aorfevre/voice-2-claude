@@ -54,12 +54,18 @@ db.exec(`
 `);
 
 export function addMessage(sessionId, msg) {
-  db.prepare('INSERT INTO messages (session_id, type, data) VALUES (?, ?, ?)').run(sessionId, msg.type, JSON.stringify(msg));
+  const now = new Date().toISOString();
+  msg.timestamp = now;
+  db.prepare('INSERT INTO messages (session_id, type, data, created_at) VALUES (?, ?, ?, ?)').run(sessionId, msg.type, JSON.stringify(msg), now);
 }
 
 export function getMessages(sessionId) {
-  const rows = db.prepare('SELECT data FROM messages WHERE session_id = ? ORDER BY id ASC').all(sessionId);
-  return rows.map(r => JSON.parse(r.data));
+  const rows = db.prepare('SELECT data, created_at FROM messages WHERE session_id = ? ORDER BY id ASC').all(sessionId);
+  return rows.map(r => {
+    const msg = JSON.parse(r.data);
+    if (!msg.timestamp) msg.timestamp = r.created_at;
+    return msg;
+  });
 }
 
 // --- Session metadata ---
