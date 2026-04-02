@@ -478,6 +478,42 @@ html, body {
   object-fit: cover;
 }
 
+.attachment-text {
+  position: relative;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 30px 10px 12px;
+  max-width: 240px;
+}
+
+.attachment-text-preview {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: 'SF Mono', 'Menlo', monospace;
+  line-height: 1.4;
+  max-height: 48px;
+  overflow: hidden;
+}
+
+.attachment-text-meta {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.attachment-badge {
+  font-size: 9px;
+  font-weight: 700;
+  background: var(--border);
+  color: var(--text-secondary);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
 .attachment-remove {
   position: absolute;
   top: 2px;

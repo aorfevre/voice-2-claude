@@ -649,7 +649,7 @@ function bindChatEvents() {
       input.style.height = Math.min(input.scrollHeight, 300) + 'px';
     });
 
-    // Paste handler for images and rich text
+    // Paste handler for images and large text
     input.addEventListener('paste', (e) => {
       const items = e.clipboardData?.items;
       if (!items) return;
@@ -664,7 +664,18 @@ function bindChatEvents() {
             renderAttachments();
           };
           reader.readAsDataURL(file);
+          return;
         }
+      }
+
+      // Large text paste → convert to attachment widget
+      const text = e.clipboardData?.getData('text/plain');
+      if (text && text.length > 200) {
+        e.preventDefault();
+        const preview = text.slice(0, 80).replace(/\n/g, ' ') + '...';
+        const lines = text.split('\n').length;
+        pendingAttachments.push({ type: 'text', data: text, name: `${lines} lines pasted`, preview });
+        renderAttachments();
       }
     });
 
@@ -679,12 +690,24 @@ function bindChatEvents() {
 function renderAttachments() {
   const el = document.getElementById('attachments-preview');
   if (!el) return;
-  el.innerHTML = pendingAttachments.map((a, i) => `
-    <div class="attachment-thumb">
-      <img src="${a.data}" alt="${escapeHtml(a.name)}">
-      <button class="attachment-remove" onclick="removeAttachment(${i})">&times;</button>
-    </div>
-  `).join('');
+  el.innerHTML = pendingAttachments.map((a, i) => {
+    if (a.type === 'image') {
+      return `
+        <div class="attachment-thumb">
+          <img src="${a.data}" alt="${escapeHtml(a.name)}">
+          <button class="attachment-remove" onclick="removeAttachment(${i})">&times;</button>
+        </div>`;
+    }
+    if (a.type === 'text') {
+      return `
+        <div class="attachment-text">
+          <div class="attachment-text-preview">${escapeHtml(a.preview)}</div>
+          <div class="attachment-text-meta">${escapeHtml(a.name)}<span class="attachment-badge">PASTED</span></div>
+          <button class="attachment-remove" onclick="removeAttachment(${i})">&times;</button>
+        </div>`;
+    }
+    return '';
+  }).join('');
 }
 
 window.removeAttachment = (idx) => {
@@ -706,10 +729,14 @@ function submitInput() {
   pendingAttachments = [];
   renderAttachments();
 
+  // Combine text attachments into the prompt
+  const textAttachments = attachments.filter(a => a.type === 'text').map(a => a.data);
+  const fullPrompt = [text, ...textAttachments].filter(Boolean).join('\n\n');
+
   if (currentSessionId) {
-    sendMessage(text);
+    sendMessage(fullPrompt);
   } else {
-    createSession(text);
+    createSession(fullPrompt);
   }
 }
 
