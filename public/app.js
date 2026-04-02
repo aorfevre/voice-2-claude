@@ -1,11 +1,12 @@
 const app = document.getElementById('app');
 let ws = null;
-let currentView = 'list';
 let currentTarget = null;
 let sessions = [];
 let terminalOutput = '';
 let renaming = false;
 let reconnectDelay = 1000;
+
+function isDesktop() { return window.innerWidth >= 768; }
 
 // --- WebSocket ---
 
@@ -15,7 +16,7 @@ function connectWs() {
 
   ws.onopen = () => {
     reconnectDelay = 1000;
-    if (currentView === 'terminal' && currentTarget) {
+    if (currentTarget) {
       ws.send(JSON.stringify({ type: 'subscribe', target: currentTarget }));
     }
   };
@@ -25,7 +26,7 @@ function connectWs() {
 
     if (msg.type === 'output' && msg.target === currentTarget) {
       terminalOutput = msg.output;
-      if (currentView === 'terminal') renderTerminalOutput();
+      renderTerminalOutput();
     }
 
     if (msg.type === 'status') {
@@ -34,8 +35,8 @@ function connectWs() {
         playNotificationSound();
       }
       if (prev) prev.status = msg.status;
-      if (currentView === 'list') renderSessionList();
-      if (currentView === 'terminal') updateTerminalStatus();
+      renderSidebar();
+      updateTerminalStatus();
     }
 
     if (msg.type === 'sessions') {
@@ -46,7 +47,7 @@ function connectWs() {
         }
       }
       sessions = msg.sessions;
-      if (currentView === 'list') renderSessionList();
+      render();
     }
 
     if (msg.type === 'sessions_changed') {
@@ -67,7 +68,7 @@ function connectWs() {
 async function fetchSessions() {
   const res = await fetch('/api/sessions');
   sessions = await res.json();
-  if (currentView === 'list') renderSessionList();
+  render();
 }
 
 async function sendInput(text) {
@@ -122,62 +123,46 @@ function playNotificationSound() {
   } catch (e) {}
 }
 
-// --- Views ---
+// --- Rendering ---
 
-function renderSessionList() {
+function render() {
+  if (isDesktop()) {
+    renderDesktop();
+  } else {
+    if (currentTarget) {
+      renderMobileTerminal();
+    } else {
+      renderMobileList();
+    }
+  }
+}
+
+// --- Sidebar HTML (shared between desktop sidebar and mobile list) ---
+
+function sessionListHtml(compact) {
   const statusLabel = { needs_input: 'NEEDS INPUT', running: 'RUNNING', idle: 'IDLE' };
-
-  app.innerHTML = `
-    <div class="header">
-      <h1>Terminal Remote</h1>
-      <div class="header-buttons">
-        <button class="btn-new btn-new-work" onclick="createSession('work')">+ Work</button>
-        <button class="btn-new btn-new-perso" onclick="createSession('perso')">+ Perso</button>
+  if (sessions.length === 0) {
+    return '<div class="empty-state">No tmux sessions found.<br>Start one from Ghostty.</div>';
+  }
+  return sessions.map(s => `
+    <div class="session-card ${s.status === 'needs_input' ? 'needs-input' : ''} ${s.target === currentTarget ? 'active' : ''}" onclick="openSession('${s.target}')">
+      <div class="session-card-header">
+        <div class="status-dot ${s.status}"></div>
+        <div class="session-name">${s.name || s.target}</div>
+        <span class="status-badge ${s.status}">${statusLabel[s.status] || 'IDLE'}</span>
       </div>
+      <div class="session-meta">${s.target}${s.cwd ? ' \u2022 ' + s.cwd.replace(/.*\//, '~/') : ''}${s.lastActivity ? ' \u2022 ' + timeAgo(s.lastActivity) : ''}</div>
+      ${compact ? '' : `<div class="session-preview">${escapeHtml(s.preview || '\u276f _')}</div>`}
     </div>
-    <div class="session-list">
-      ${sessions.length === 0 ? '<div class="empty-state">No tmux sessions found.<br>Start one from Ghostty.</div>' : ''}
-      ${sessions.map(s => `
-        <div class="session-card ${s.status === 'needs_input' ? 'needs-input' : ''}" onclick="openSession('${s.target}')">
-          <div class="session-card-header">
-            <div class="status-dot ${s.status}"></div>
-            <div class="session-name">${s.name || s.target}</div>
-            <span class="status-badge ${s.status}">${statusLabel[s.status] || 'IDLE'}</span>
-          </div>
-          <div class="session-meta">${s.target}${s.cwd ? ' \u2022 ' + s.cwd.replace(/.*\//, '~/') : ''}${s.lastActivity ? ' \u2022 ' + timeAgo(s.lastActivity) : ''}</div>
-          <div class="session-preview">${escapeHtml(s.preview || '\u276f _')}</div>
-        </div>
-      `).join('')}
-    </div>
-  `;
+  `).join('');
 }
 
-function openSession(target) {
-  currentView = 'terminal';
-  currentTarget = target;
-  renaming = false;
-  terminalOutput = '';
-  renderTerminal();
-  if (ws && ws.readyState === 1) {
-    ws.send(JSON.stringify({ type: 'subscribe', target }));
-  }
-}
-
-function goBack() {
-  currentView = 'list';
-  currentTarget = null;
-  if (ws && ws.readyState === 1) {
-    ws.send(JSON.stringify({ type: 'unsubscribe' }));
-  }
-  fetchSessions();
-}
-
-function renderTerminal() {
+function terminalHtml() {
   const session = sessions.find(s => s.target === currentTarget);
-  const name = session?.name || currentTarget;
+  const name = session?.name || currentTarget || '';
   const s = session?.status || 'idle';
 
-  app.innerHTML = `
+  return `
     <div class="terminal-header">
       <button class="btn-back" onclick="goBack()">\u2190 Back</button>
       <span class="terminal-title">${escapeHtml(name)}</span>
@@ -206,10 +191,87 @@ function renderTerminal() {
       </div>
     </div>
   `;
+}
+
+// --- Desktop Layout ---
+
+function renderDesktop() {
+  app.innerHTML = `
+    <div class="desktop-layout">
+      <div class="sidebar">
+        <div class="header">
+          <h1>Terminal Remote</h1>
+          <div class="header-buttons">
+            <button class="btn-new btn-new-work" onclick="createSession('work')">+ W</button>
+            <button class="btn-new btn-new-perso" onclick="createSession('perso')">+ P</button>
+          </div>
+        </div>
+        <div class="session-list" id="sidebar-list">
+          ${sessionListHtml(true)}
+        </div>
+      </div>
+      <div class="terminal-panel">
+        ${currentTarget ? terminalHtml() : '<div class="terminal-empty">Select a session</div>'}
+      </div>
+    </div>
+  `;
 
   const out = document.getElementById('terminal-output');
   if (out) out.scrollTop = out.scrollHeight;
   if (renaming) document.getElementById('rename-input')?.focus();
+}
+
+// --- Mobile Layout ---
+
+function renderMobileList() {
+  app.innerHTML = `
+    <div class="header">
+      <h1>Terminal Remote</h1>
+      <div class="header-buttons">
+        <button class="btn-new btn-new-work" onclick="createSession('work')">+ Work</button>
+        <button class="btn-new btn-new-perso" onclick="createSession('perso')">+ Perso</button>
+      </div>
+    </div>
+    <div class="session-list">
+      ${sessionListHtml(false)}
+    </div>
+  `;
+}
+
+function renderMobileTerminal() {
+  app.innerHTML = terminalHtml();
+  const out = document.getElementById('terminal-output');
+  if (out) out.scrollTop = out.scrollHeight;
+  if (renaming) document.getElementById('rename-input')?.focus();
+}
+
+// --- Sidebar-only update (avoids re-rendering terminal) ---
+
+function renderSidebar() {
+  if (isDesktop()) {
+    const list = document.getElementById('sidebar-list');
+    if (list) list.innerHTML = sessionListHtml(true);
+  }
+}
+
+// --- Actions ---
+
+function openSession(target) {
+  currentTarget = target;
+  renaming = false;
+  terminalOutput = '';
+  render();
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'subscribe', target }));
+  }
+}
+
+function goBack() {
+  currentTarget = null;
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'unsubscribe' }));
+  }
+  fetchSessions();
 }
 
 function renderTerminalOutput() {
@@ -223,13 +285,13 @@ function renderTerminalOutput() {
 function updateTerminalStatus() {
   const session = sessions.find(s => s.target === currentTarget);
   if (!session) return;
-  const dots = app.querySelectorAll('.terminal-header .status-dot');
+  const dots = document.querySelectorAll('.terminal-header .status-dot');
   dots.forEach(d => { d.className = `status-dot ${session.status}`; });
 }
 
 function toggleRename() {
   renaming = !renaming;
-  renderTerminal();
+  render();
 }
 
 function saveRename() {
@@ -239,7 +301,7 @@ function saveRename() {
     renaming = false;
     const s = sessions.find(s => s.target === currentTarget);
     if (s) s.name = input.value.trim();
-    renderTerminal();
+    render();
   }
 }
 
@@ -272,6 +334,8 @@ function timeAgo(ts) {
 connectWs();
 fetchSessions();
 
-setInterval(() => {
-  if (currentView === 'list') fetchSessions();
-}, 5000);
+// Re-render on resize (mobile <-> desktop transition)
+window.addEventListener('resize', () => render());
+
+// Refresh session list periodically
+setInterval(() => fetchSessions(), 5000);
