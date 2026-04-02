@@ -309,7 +309,7 @@ function render() {
         ${renderSidebarHtml()}
       </div>
       <div class="chat-panel">
-        ${currentSessionId ? renderChatHtml() : renderEmptyHtml()}
+        ${showProjectPicker ? renderEmptyHtml() : (currentSessionId ? renderChatHtml() : renderEmptyHtml())}
       </div>
     </div>
   `;
