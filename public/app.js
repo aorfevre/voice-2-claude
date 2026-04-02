@@ -427,13 +427,7 @@ function renderMessageHtml(msg) {
   }
 
   if (msg.type === 'result') {
-    const cost = msg.cost != null ? `$${msg.cost.toFixed(4)}` : '';
-    const duration = msg.duration != null ? `${(msg.duration / 1000).toFixed(1)}s` : '';
-    return `<div class="result-banner">
-      ${cost ? `<span class="cost">${cost}</span>` : ''}
-      ${duration ? `<span class="duration">${duration}</span>` : ''}
-      <span>Done</span>
-    </div>`;
+    return '';
   }
 
   if (msg.type === 'error') {
