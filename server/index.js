@@ -84,8 +84,19 @@ function transformMessage(msg, sessionId) {
     };
   }
 
+  if (msg.type === 'rate_limit_event') {
+    return {
+      type: 'rate_limit',
+      info: msg.rate_limit_info,
+      sessionId,
+    };
+  }
+
   return null;
 }
+
+// Track usage per profile (last known)
+const profileUsage = {}; // { work: { ... }, perso: { ... } }
 
 async function runQuery(sessionId, prompt, isResume) {
   const session = activeSessions.get(sessionId);
@@ -125,6 +136,11 @@ async function runQuery(sessionId, prompt, isResume) {
     for await (const msg of conversation) {
       if (abortController.signal.aborted) break;
 
+      // Capture rate limit info per profile
+      if (msg.type === 'rate_limit_event' && msg.rate_limit_info && session.profile) {
+        profileUsage[session.profile] = msg.rate_limit_info;
+      }
+
       const transformed = transformMessage(msg, sessionId);
       if (transformed) {
         // Only store full messages (not streaming deltas)
@@ -157,6 +173,8 @@ async function runQuery(sessionId, prompt, isResume) {
 // --- REST API ---
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
+
+app.get('/api/usage', (_req, res) => res.json(profileUsage));
 
 app.get('/api/projects', (_req, res) => {
   const devDir = path.join(process.env.HOME, 'Developers');

@@ -144,6 +144,11 @@ function handleWsMessage(msg) {
     return;
   }
 
+  if (msg.type === 'rate_limit') {
+    fetchUsage();
+    return;
+  }
+
   if (msg.type === 'error') {
     getMessages(sid).push({ type: 'error', error: msg.error });
     isStreaming = false;
@@ -343,7 +348,41 @@ function renderSidebarHtml() {
         </div>
       `).join('')}
     </div>
+    <div class="sidebar-footer" id="sidebar-usage">
+      ${renderUsageHtml()}
+    </div>
   `;
+}
+
+let usageData = {};
+
+async function fetchUsage() {
+  try {
+    const res = await fetch('/api/usage');
+    usageData = await res.json();
+    const el = document.getElementById('sidebar-usage');
+    if (el) el.innerHTML = renderUsageHtml();
+  } catch {}
+}
+
+function renderUsageHtml() {
+  const profiles = ['work', 'perso'];
+  const bars = profiles.map(p => {
+    const info = usageData[p];
+    if (!info || info.utilization == null) {
+      return `<div class="usage-row"><span class="usage-label">${p}</span><span class="usage-value">--</span></div>`;
+    }
+    const pct = Math.round(info.utilization * 100);
+    const color = pct > 80 ? 'var(--red)' : pct > 50 ? 'var(--orange)' : 'var(--blue)';
+    return `
+      <div class="usage-row">
+        <span class="usage-label">${p}</span>
+        <div class="usage-bar"><div class="usage-fill" style="width:${pct}%;background:${color}"></div></div>
+        <span class="usage-value">${pct}%</span>
+      </div>
+    `;
+  }).join('');
+  return `<div class="usage-title">Usage</div>${bars}`;
 }
 
 function renderChatHtml() {
@@ -703,6 +742,8 @@ function playNotificationSound() {
 connectWs();
 render();
 fetchSessions().then(() => render());
+fetchUsage();
+setInterval(fetchUsage, 30000); // refresh usage every 30s
 
 // Request browser notification permission
 if ('Notification' in window && Notification.permission === 'default') {
