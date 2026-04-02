@@ -269,10 +269,8 @@ app.post('/api/sessions/:id/message', (req, res) => {
     return res.status(409).json({ error: 'Session is currently running' });
   }
 
-  // Add user message
-  const userMsg = { type: 'user', content: [{ type: 'text', text: prompt }], sessionId: id };
-  session.messages.push(userMsg);
-  broadcastToSession(id, userMsg);
+  // Store user message server-side (client already shows it locally)
+  session.messages.push({ type: 'user', content: [{ type: 'text', text: prompt }], sessionId: id });
 
   // Run query in background (resume if we have a Claude session ID)
   runQuery(id, prompt, !!session.claudeSessionId);

@@ -49,14 +49,8 @@ function handleWsMessage(msg) {
   const sid = msg.sessionId;
   if (!sid) return;
 
-  if (msg.type === 'user') {
-    getMessages(sid).push({
-      type: 'user',
-      content: msg.content,
-    });
-    renderMessages();
-    return;
-  }
+  // Skip user messages from WS — we add them locally before sending
+  if (msg.type === 'user') return;
 
   if (msg.type === 'assistant') {
     // Full assistant message - finalize any streaming state
