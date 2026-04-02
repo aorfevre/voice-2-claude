@@ -597,10 +597,20 @@ async function openSession(id) {
 }
 
 // Global handlers
-window.onNewSession = (profile) => {
+window.onNewSession = async (profile) => {
   pendingProfile = profile || 'perso';
-  currentSessionId = null;
+  // Create session immediately (no prompt yet)
+  const res = await fetch('/api/sessions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ profile: pendingProfile, name: `New ${pendingProfile} session` }),
+  });
+  const data = await res.json();
+  currentSessionId = data.id;
   showMobileSidebar = false;
+  isStreaming = false;
+  streamingText = '';
+  await fetchSessions();
   render();
   const input = document.getElementById('chat-input');
   if (input) input.focus();
