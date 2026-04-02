@@ -64,16 +64,14 @@ export function getMessages(sessionId) {
 
 // --- Session metadata ---
 
+// Add columns if missing (migrations)
+try { db.exec('ALTER TABLE sessions ADD COLUMN claude_session_id TEXT'); } catch {}
+try { db.exec('ALTER TABLE sessions ADD COLUMN profile TEXT'); } catch {}
+
 export function setClaudeSessionId(id, claudeSessionId) {
-  db.exec(`ALTER TABLE sessions ADD COLUMN claude_session_id TEXT`).catch?.(() => {});
   db.prepare('UPDATE sessions SET claude_session_id = ? WHERE id = ?').run(claudeSessionId, id);
 }
 
 export function setProfile(id, profile) {
-  db.exec(`ALTER TABLE sessions ADD COLUMN profile TEXT`).catch?.(() => {});
   db.prepare('UPDATE sessions SET profile = ? WHERE id = ?').run(profile, id);
 }
-
-// Add columns if missing (migrations)
-try { db.exec('ALTER TABLE sessions ADD COLUMN claude_session_id TEXT'); } catch {}
-try { db.exec('ALTER TABLE sessions ADD COLUMN profile TEXT'); } catch {}
