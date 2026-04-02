@@ -751,6 +751,7 @@ function submitInput() {
 async function openSession(id) {
   currentSessionId = id;
   needsAttention.delete(id);
+  showProjectPicker = false;
   showMobileSidebar = false;
   isStreaming = false;
   streamingText = '';
@@ -810,6 +811,7 @@ window.onPickProject = async (projectPath) => {
 
 window.onBackMobile = () => {
   currentSessionId = null;
+  showProjectPicker = false;
   showMobileSidebar = true;
   render();
 };
