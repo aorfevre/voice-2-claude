@@ -2,6 +2,7 @@ import express from 'express';
 import http from 'http';
 import { WebSocketServer } from 'ws';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { randomUUID } from 'crypto';
@@ -156,6 +157,23 @@ async function runQuery(sessionId, prompt, isResume) {
 // --- REST API ---
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
+
+app.get('/api/projects', (_req, res) => {
+  const devDir = path.join(process.env.HOME, 'Developers');
+  try {
+    const entries = fs.readdirSync(devDir, { withFileTypes: true });
+    const projects = entries
+      .filter(e => e.isDirectory() && !e.name.startsWith('.'))
+      .map(e => ({
+        name: e.name,
+        path: path.join(devDir, e.name),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    res.json(projects);
+  } catch {
+    res.json([]);
+  }
+});
 
 app.get('/api/sessions', (_req, res) => {
   const dbSessions = db.getAllSessions();

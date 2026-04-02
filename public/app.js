@@ -369,18 +369,19 @@ function renderChatHtml() {
 }
 
 function renderEmptyHtml() {
-  if (pendingProfile) {
-    // User clicked + Work or + Perso — show input for first message
+  if (showProjectPicker) {
     const label = pendingProfile.charAt(0).toUpperCase() + pendingProfile.slice(1);
     return `
-      <div class="chat-empty">
-        <div class="chat-empty-icon">&#9678;</div>
-        <div class="chat-empty-text">New ${label} session</div>
-      </div>
-      <div class="input-area">
-        <div class="input-row">
-          <textarea id="chat-input" rows="1" placeholder="What do you want to work on?"></textarea>
-          <button class="btn-send" id="btn-send" title="Send">&#8593;</button>
+      <div class="project-picker">
+        <h2>New ${label} session</h2>
+        <p class="subtitle">Select a project:</p>
+        <div class="project-list">
+          ${projects.map(p => `
+            <div class="project-item" onclick="onPickProject('${p.path}')">
+              <span class="project-icon">📁</span>
+              <span class="project-name">${escapeHtml(p.name)}</span>
+            </div>
+          `).join('')}
         </div>
       </div>
     `;
@@ -604,17 +605,31 @@ async function openSession(id) {
 }
 
 // Global handlers
+let projects = [];
+let showProjectPicker = false;
+
 window.onNewSession = async (profile) => {
   pendingProfile = profile || 'perso';
-  // Create session immediately (no prompt yet)
+  // Fetch projects and show picker
+  try {
+    const res = await fetch('/api/projects');
+    projects = await res.json();
+  } catch { projects = []; }
+  showProjectPicker = true;
+  showMobileSidebar = false;
+  render();
+};
+
+window.onPickProject = async (projectPath) => {
+  showProjectPicker = false;
+  const projectName = projectPath.split('/').pop();
   const res = await fetch('/api/sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ profile: pendingProfile, name: `New ${pendingProfile} session` }),
+    body: JSON.stringify({ profile: pendingProfile, cwd: projectPath, name: `${projectName}` }),
   });
   const data = await res.json();
   currentSessionId = data.id;
-  showMobileSidebar = false;
   isStreaming = false;
   streamingText = '';
   await fetchSessions();

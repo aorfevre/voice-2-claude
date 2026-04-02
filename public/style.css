@@ -477,6 +477,58 @@ html, body {
   flex-shrink: 0;
 }
 
+/* --- Project Picker --- */
+.project-picker {
+  flex: 1;
+  padding: 40px 20px;
+  overflow-y: auto;
+}
+
+.project-picker h2 {
+  font-size: 20px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.project-picker .subtitle {
+  color: var(--text-secondary);
+  font-size: 14px;
+  margin-bottom: 20px;
+}
+
+.project-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+}
+
+.project-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.project-item:hover {
+  border-color: var(--blue);
+  background: var(--bg-tertiary);
+}
+
+.project-icon { font-size: 18px; }
+
+.project-name {
+  font-size: 14px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* --- Mobile --- */
 @media (max-width: 767px) {
   .sidebar { display: none; }
