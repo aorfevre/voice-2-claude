@@ -212,11 +212,13 @@ async function fetchSessions() {
   } catch {}
 }
 
+let pendingProfile = 'perso'; // default profile for new sessions
+
 async function createSession(prompt) {
   const res = await fetch('/api/sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({ prompt, profile: pendingProfile }),
   });
   const data = await res.json();
   currentSessionId = data.id;
@@ -315,8 +317,11 @@ function render() {
 function renderSidebarHtml() {
   return `
     <div class="sidebar-header">
-      <h1>Claude Agent</h1>
-      <button class="btn-new-session" onclick="onNewSession()">+ New</button>
+      <h1>Claude</h1>
+      <div style="display:flex;gap:4px;">
+        <button class="btn-new-session btn-work" onclick="onNewSession('work')">+ Work</button>
+        <button class="btn-new-session btn-perso" onclick="onNewSession('perso')">+ Perso</button>
+      </div>
     </div>
     <div class="session-list" id="session-list">
       ${sessions.length === 0 ? '<div style="text-align:center;color:var(--text-muted);padding:40px 16px;font-size:14px;">No sessions yet.<br>Start one with the + New button.</div>' : ''}
@@ -575,7 +580,8 @@ async function openSession(id) {
 }
 
 // Global handlers
-window.onNewSession = () => {
+window.onNewSession = (profile) => {
+  pendingProfile = profile || 'perso';
   currentSessionId = null;
   showMobileSidebar = false;
   render();

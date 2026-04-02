@@ -74,6 +74,8 @@ html, body {
 }
 
 .btn-new-session:hover { opacity: 0.85; }
+.btn-work { background: var(--blue-bg); }
+.btn-perso { background: #8b5cf6; }
 
 .session-list {
   flex: 1;

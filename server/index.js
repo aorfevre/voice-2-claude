@@ -97,6 +97,11 @@ async function runQuery(sessionId, prompt, isResume) {
   broadcastToSession(sessionId, { type: 'status', status: 'running' });
 
   try {
+    // Map profile to CCS instance config dir
+    const profileConfigDir = session.profile
+      ? `/Users/aorfevre/.ccs/instances/${session.profile}`
+      : undefined;
+
     const opts = {
       abortController,
       cwd: session.cwd || '/Users/aorfevre/Developers',
@@ -104,6 +109,10 @@ async function runQuery(sessionId, prompt, isResume) {
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
       includePartialMessages: true,
+      env: {
+        ...process.env,
+        ...(profileConfigDir ? { CLAUDE_CONFIG_DIR: profileConfigDir } : {}),
+      },
     };
 
     if (isResume && session.claudeSessionId) {
@@ -162,9 +171,10 @@ app.get('/api/sessions', (_req, res) => {
 });
 
 app.post('/api/sessions', (req, res) => {
-  const { prompt, name, cwd } = req.body;
+  const { prompt, name, cwd, profile } = req.body;
   const sessionId = randomUUID();
   const sessionCwd = cwd || '/Users/aorfevre/Developers';
+  const sessionProfile = profile || 'perso'; // 'work' or 'perso'
   const sessionName = name || prompt?.slice(0, 50) || 'New Session';
 
   db.createSession(sessionId, sessionName, sessionCwd);
@@ -175,6 +185,7 @@ app.post('/api/sessions', (req, res) => {
     running: false,
     cwd: sessionCwd,
     claudeSessionId: null,
+    profile: sessionProfile,
   });
 
   // Start the query in background
