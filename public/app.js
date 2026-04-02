@@ -1,12 +1,19 @@
+/* global marked */
 const app = document.getElementById('app');
 let ws = null;
-let currentTarget = null;
-let sessions = [];
-let terminalOutput = '';
-let renaming = false;
 let reconnectDelay = 1000;
 
-function isDesktop() { return window.innerWidth >= 768; }
+// State
+let currentSessionId = null;
+let sessions = [];
+const sessionMessages = new Map(); // sessionId -> messages[]
+let isStreaming = false;
+let streamingText = '';
+let streamingToolCards = []; // { id, name, input }
+let currentToolId = null;
+let currentToolName = 'Tool';
+let currentToolInput = '';
+let showMobileSidebar = false;
 
 // --- WebSocket ---
 
@@ -14,45 +21,11 @@ function connectWs() {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(`${protocol}//${location.host}`);
 
-  ws.onopen = () => {
-    reconnectDelay = 1000;
-    if (currentTarget) {
-      ws.send(JSON.stringify({ type: 'subscribe', target: currentTarget }));
-    }
-  };
+  ws.onopen = () => { reconnectDelay = 1000; };
 
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
-
-    if (msg.type === 'output' && msg.target === currentTarget) {
-      terminalOutput = msg.output;
-      renderTerminalOutput();
-    }
-
-    if (msg.type === 'status') {
-      const prev = sessions.find(s => s.target === msg.target);
-      if (prev && prev.status !== 'needs_input' && msg.status === 'needs_input') {
-        playNotificationSound();
-      }
-      if (prev) prev.status = msg.status;
-      renderSidebar();
-      updateTerminalStatus();
-    }
-
-    if (msg.type === 'sessions') {
-      for (const s of msg.sessions) {
-        const prev = sessions.find(p => p.target === s.target);
-        if (prev && prev.status !== 'needs_input' && s.status === 'needs_input') {
-          playNotificationSound();
-        }
-      }
-      sessions = msg.sessions;
-      render();
-    }
-
-    if (msg.type === 'sessions_changed') {
-      fetchSessions();
-    }
+    handleWsMessage(msg);
   };
 
   ws.onclose = () => {
@@ -63,32 +36,225 @@ function connectWs() {
   };
 }
 
+function handleWsMessage(msg) {
+  if (msg.type === 'sessions_changed') {
+    fetchSessions();
+    return;
+  }
+
+  // Only process messages for the current session
+  if (msg.sessionId && msg.sessionId !== currentSessionId) return;
+
+  const sid = msg.sessionId;
+  if (!sid) return;
+
+  if (msg.type === 'user') {
+    getMessages(sid).push({
+      type: 'user',
+      content: msg.content,
+    });
+    renderMessages();
+    return;
+  }
+
+  if (msg.type === 'assistant') {
+    // Full assistant message - finalize any streaming state
+    finalizeStreaming(sid);
+    // Add the full assistant message with content blocks
+    const parsed = parseAssistantContent(msg.content);
+    getMessages(sid).push({
+      type: 'assistant',
+      textParts: parsed.textParts,
+      toolCards: parsed.toolCards,
+    });
+    renderMessages();
+    return;
+  }
+
+  if (msg.type === 'text_delta') {
+    isStreaming = true;
+    streamingText += msg.text;
+    renderMessages();
+    return;
+  }
+
+  if (msg.type === 'tool_start') {
+    // Finalize current streaming text as a text part
+    if (streamingText) {
+      ensureStreamingMsg(sid);
+      const msgs = getMessages(sid);
+      const last = msgs[msgs.length - 1];
+      if (last && last.type === 'assistant-streaming') {
+        last.textParts.push(streamingText);
+        streamingText = '';
+      }
+    }
+    currentToolId = msg.id;
+    currentToolName = msg.tool || 'Tool';
+    currentToolInput = '';
+    isStreaming = true;
+    renderMessages();
+    return;
+  }
+
+  if (msg.type === 'tool_delta') {
+    currentToolInput += msg.json;
+    return;
+  }
+
+  if (msg.type === 'block_stop') {
+    if (currentToolId) {
+      ensureStreamingMsg(sid);
+      const msgs = getMessages(sid);
+      const last = msgs[msgs.length - 1];
+      if (last && last.type === 'assistant-streaming') {
+        let parsedInput = currentToolInput;
+        try { parsedInput = JSON.parse(currentToolInput); } catch {}
+        last.toolCards.push({ id: currentToolId, name: currentToolName, input: parsedInput });
+      }
+      currentToolId = null;
+      currentToolName = 'Tool';
+      currentToolInput = '';
+      renderMessages();
+    }
+    return;
+  }
+
+  if (msg.type === 'result') {
+    finalizeStreaming(sid);
+    getMessages(sid).push({
+      type: 'result',
+      cost: msg.cost,
+      duration: msg.duration,
+    });
+    isStreaming = false;
+    streamingText = '';
+    streamingToolCards = [];
+    renderMessages();
+    updateSessionRunning(sid, false);
+    return;
+  }
+
+  if (msg.type === 'status') {
+    updateSessionRunning(sid, msg.status === 'running');
+    renderSidebar();
+    return;
+  }
+
+  if (msg.type === 'error') {
+    getMessages(sid).push({ type: 'error', error: msg.error });
+    isStreaming = false;
+    renderMessages();
+    return;
+  }
+}
+
+function ensureStreamingMsg(sid) {
+  const msgs = getMessages(sid);
+  const last = msgs[msgs.length - 1];
+  if (!last || last.type !== 'assistant-streaming') {
+    msgs.push({ type: 'assistant-streaming', textParts: [], toolCards: [] });
+  }
+}
+
+function guessToolName(id, streamMsg) {
+  // The tool_start message should have set the name; fallback
+  return streamMsg._lastToolName || 'Tool';
+}
+
+function finalizeStreaming(sid) {
+  const msgs = getMessages(sid);
+  const last = msgs[msgs.length - 1];
+  if (last && last.type === 'assistant-streaming') {
+    if (streamingText) {
+      last.textParts.push(streamingText);
+    }
+    last.type = 'assistant';
+    streamingText = '';
+    isStreaming = false;
+  }
+}
+
+function parseAssistantContent(content) {
+  const textParts = [];
+  const toolCards = [];
+  if (!Array.isArray(content)) {
+    textParts.push(String(content));
+    return { textParts, toolCards };
+  }
+  for (const block of content) {
+    if (block.type === 'text') {
+      textParts.push(block.text);
+    } else if (block.type === 'tool_use') {
+      toolCards.push({ id: block.id, name: block.name, input: block.input });
+    }
+  }
+  return { textParts, toolCards };
+}
+
+function getMessages(sid) {
+  if (!sessionMessages.has(sid)) sessionMessages.set(sid, []);
+  return sessionMessages.get(sid);
+}
+
+function updateSessionRunning(sid, running) {
+  const s = sessions.find(s => s.id === sid);
+  if (s) s.running = running;
+}
+
 // --- API ---
 
 async function fetchSessions() {
-  const res = await fetch('/api/sessions');
-  sessions = await res.json();
+  try {
+    const res = await fetch('/api/sessions');
+    sessions = await res.json();
+    renderSidebar();
+  } catch {}
+}
+
+async function createSession(prompt) {
+  const res = await fetch('/api/sessions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt }),
+  });
+  const data = await res.json();
+  currentSessionId = data.id;
+  showMobileSidebar = false;
+  isStreaming = false;
+  streamingText = '';
+
+  // Add user message immediately
+  getMessages(data.id).push({
+    type: 'user',
+    content: [{ type: 'text', text: prompt }],
+  });
+
+  await fetchSessions();
   render();
 }
 
-async function sendInput(text) {
-  await fetch(`/api/sessions/${encodeURIComponent(currentTarget)}/input`, {
+async function sendMessage(prompt) {
+  if (!currentSessionId) return;
+
+  // Add user message immediately
+  getMessages(currentSessionId).push({
+    type: 'user',
+    content: [{ type: 'text', text: prompt }],
+  });
+  isStreaming = false;
+  streamingText = '';
+  renderMessages();
+
+  await fetch(`/api/sessions/${currentSessionId}/message`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ prompt }),
   });
 }
 
-async function sendSpecial(key) {
-  await fetch(`/api/sessions/${encodeURIComponent(currentTarget)}/input`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ special: key }),
-  });
-}
-
-async function renameSess(target, name) {
-  await fetch(`/api/sessions/${encodeURIComponent(target)}/name`, {
+async function renameSession(id, name) {
+  await fetch(`/api/sessions/${id}/name`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),
@@ -96,237 +262,351 @@ async function renameSess(target, name) {
   fetchSessions();
 }
 
-async function createSession(type) {
-  await fetch('/api/sessions/new', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type }),
-  });
-  fetchSessions();
+async function deleteSession(id) {
+  await fetch(`/api/sessions/${id}`, { method: 'DELETE' });
+  if (currentSessionId === id) {
+    currentSessionId = null;
+  }
+  sessionMessages.delete(id);
+  await fetchSessions();
+  render();
 }
 
-// --- Notification Sound ---
-
-function playNotificationSound() {
+async function loadSessionMessages(id) {
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.frequency.value = 880;
-    osc.type = 'sine';
-    gain.gain.value = 0.3;
-    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
-    osc.start();
-    osc.stop(ctx.currentTime + 0.3);
-  } catch (e) {}
+    const res = await fetch(`/api/sessions/${id}/messages`);
+    const data = await res.json();
+    if (data.messages && data.messages.length > 0) {
+      sessionMessages.set(id, data.messages);
+    }
+  } catch {}
+}
+
+function abortSession(id) {
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'abort', sessionId: id }));
+  }
 }
 
 // --- Rendering ---
 
 function render() {
-  if (isDesktop()) {
-    renderDesktop();
-  } else {
-    if (currentTarget) {
-      renderMobileTerminal();
-    } else {
-      renderMobileList();
-    }
-  }
-}
+  const isMobile = window.innerWidth < 768;
 
-// --- Sidebar HTML (shared between desktop sidebar and mobile list) ---
-
-function sessionListHtml(compact) {
-  const statusLabel = { needs_input: 'NEEDS INPUT', running: 'RUNNING', idle: 'IDLE' };
-  if (sessions.length === 0) {
-    return '<div class="empty-state">No tmux sessions found.<br>Start one from Ghostty.</div>';
+  if (isMobile && !currentSessionId && !showMobileSidebar) {
+    showMobileSidebar = true;
   }
-  return sessions.map(s => `
-    <div class="session-card ${s.status === 'needs_input' ? 'needs-input' : ''} ${s.target === currentTarget ? 'active' : ''}" onclick="openSession('${s.target}')">
-      <div class="session-card-header">
-        <div class="status-dot ${s.status}"></div>
-        <div class="session-name">${s.name || s.target}</div>
-        <span class="status-badge ${s.status}">${statusLabel[s.status] || 'IDLE'}</span>
+
+  app.innerHTML = `
+    <div class="layout">
+      <div class="sidebar ${isMobile && showMobileSidebar ? 'mobile-visible' : ''}">
+        ${renderSidebarHtml()}
       </div>
-      <div class="session-meta">${s.target}${s.cwd ? ' \u2022 ' + s.cwd.replace(/.*\//, '~/') : ''}${s.lastActivity ? ' \u2022 ' + timeAgo(s.lastActivity) : ''}</div>
-      ${compact ? '' : `<div class="session-preview">${escapeHtml(s.preview || '\u276f _')}</div>`}
+      <div class="chat-panel">
+        ${currentSessionId ? renderChatHtml() : renderEmptyHtml()}
+      </div>
     </div>
-  `).join('');
+  `;
+
+  bindEvents();
+  scrollToBottom();
 }
 
-function terminalHtml() {
-  const session = sessions.find(s => s.target === currentTarget);
-  const name = session?.name || currentTarget || '';
-  const s = session?.status || 'idle';
+function renderSidebarHtml() {
+  return `
+    <div class="sidebar-header">
+      <h1>Claude Agent</h1>
+      <button class="btn-new-session" onclick="onNewSession()">+ New</button>
+    </div>
+    <div class="session-list" id="session-list">
+      ${sessions.length === 0 ? '<div style="text-align:center;color:var(--text-muted);padding:40px 16px;font-size:14px;">No sessions yet.<br>Start one with the + New button.</div>' : ''}
+      ${sessions.map(s => `
+        <div class="session-item ${s.id === currentSessionId ? 'active' : ''}" data-id="${s.id}">
+          <div class="session-item-name">${escapeHtml(s.name || 'Untitled')}</div>
+          <div class="session-item-meta">
+            ${s.running ? '<span class="session-running-dot"></span> Running' : ''}
+            ${!s.running && s.messageCount ? s.messageCount + ' messages' : ''}
+            ${!s.running && !s.messageCount ? 'Empty' : ''}
+          </div>
+          <button class="session-delete" data-delete="${s.id}" title="Delete">&times;</button>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderChatHtml() {
+  const session = sessions.find(s => s.id === currentSessionId);
+  const name = session?.name || 'Untitled';
+  const running = session?.running || false;
+  const msgs = getMessages(currentSessionId);
 
   return `
-    <div class="terminal-header">
-      <button class="btn-back" onclick="goBack()">\u2190 Back</button>
-      <span class="terminal-title">${escapeHtml(name)}</span>
-      <button class="btn-rename" onclick="toggleRename()">\u270F\uFE0F</button>
-      <div class="status-dot ${s}"></div>
+    <div class="chat-header">
+      <button class="btn-back-mobile" onclick="onBackMobile()">&#8592; Back</button>
+      <div class="chat-header-name editable" onclick="onRenameSession()">${escapeHtml(name)}</div>
     </div>
-    ${renaming ? `
-      <div class="rename-bar">
-        <label>Session Name</label>
-        <div class="rename-row">
-          <input id="rename-input" type="text" value="${escapeHtml(name)}" onkeydown="if(event.key==='Enter')saveRename()">
-          <button class="btn-save" onclick="saveRename()">Save</button>
-        </div>
-      </div>
-    ` : ''}
-    <div class="terminal-output" id="terminal-output">${terminalOutput}</div>
-    <div class="terminal-input-area">
-      <div class="quick-actions">
-        <button class="btn-quick btn-yes" onclick="sendInput('y')">Yes</button>
-        <button class="btn-quick btn-no" onclick="sendInput('n')">No</button>
-        <button class="btn-quick btn-esc" onclick="sendSpecial('Escape')">Escape</button>
-      </div>
+    <div class="messages" id="messages">
+      ${msgs.map(m => renderMessageHtml(m)).join('')}
+      ${isStreaming && streamingText ? renderStreamingHtml() : ''}
+    </div>
+    <div class="input-area">
       <div class="input-row">
-        <input id="cmd-input" type="text" placeholder="Type or tap \uD83C\uDFA4 to dictate..." onkeydown="if(event.key==='Enter')submitInput()">
-        <button class="btn-send" onclick="submitInput()">\u2191</button>
+        <textarea id="chat-input" rows="1" placeholder="Send a message..." ${running ? 'disabled' : ''}></textarea>
+        ${running
+          ? '<button class="btn-abort" onclick="onAbort()" title="Stop">&#9632;</button>'
+          : '<button class="btn-send" id="btn-send" title="Send">&#8593;</button>'}
       </div>
     </div>
   `;
 }
 
-// --- Desktop Layout ---
-
-function renderDesktop() {
-  app.innerHTML = `
-    <div class="desktop-layout">
-      <div class="sidebar">
-        <div class="header">
-          <h1>Terminal Remote</h1>
-          <div class="header-buttons">
-            <button class="btn-new btn-new-work" onclick="createSession('work')">+ W</button>
-            <button class="btn-new btn-new-perso" onclick="createSession('perso')">+ P</button>
-          </div>
-        </div>
-        <div class="session-list" id="sidebar-list">
-          ${sessionListHtml(true)}
-        </div>
-      </div>
-      <div class="terminal-panel">
-        ${currentTarget ? terminalHtml() : '<div class="terminal-empty">Select a session</div>'}
-      </div>
-    </div>
-  `;
-
-  const out = document.getElementById('terminal-output');
-  if (out) out.scrollTop = out.scrollHeight;
-  if (renaming) document.getElementById('rename-input')?.focus();
-}
-
-// --- Mobile Layout ---
-
-function renderMobileList() {
-  app.innerHTML = `
-    <div class="header">
-      <h1>Terminal Remote</h1>
-      <div class="header-buttons">
-        <button class="btn-new btn-new-work" onclick="createSession('work')">+ Work</button>
-        <button class="btn-new btn-new-perso" onclick="createSession('perso')">+ Perso</button>
-      </div>
-    </div>
-    <div class="session-list">
-      ${sessionListHtml(false)}
+function renderEmptyHtml() {
+  return `
+    <div class="chat-empty">
+      <div class="chat-empty-icon">&#9678;</div>
+      <div class="chat-empty-text">Select or create a session to start</div>
     </div>
   `;
 }
 
-function renderMobileTerminal() {
-  app.innerHTML = terminalHtml();
-  const out = document.getElementById('terminal-output');
-  if (out) out.scrollTop = out.scrollHeight;
-  if (renaming) document.getElementById('rename-input')?.focus();
+function renderMessageHtml(msg) {
+  if (msg.type === 'user') {
+    const text = Array.isArray(msg.content)
+      ? msg.content.map(b => b.text || '').join('')
+      : String(msg.content);
+    return `<div class="message user"><div class="message-bubble">${escapeHtml(text)}</div></div>`;
+  }
+
+  if (msg.type === 'assistant' || msg.type === 'assistant-streaming') {
+    let html = '<div class="message assistant"><div class="message-bubble">';
+    const textParts = msg.textParts || [];
+    const toolCards = msg.toolCards || [];
+
+    let toolIdx = 0;
+    for (let i = 0; i < textParts.length; i++) {
+      if (textParts[i]) {
+        html += renderMarkdown(textParts[i]);
+      }
+      // Render any tool cards that appeared after this text part
+      while (toolIdx < toolCards.length && toolIdx <= i) {
+        html += renderToolCardHtml(toolCards[toolIdx]);
+        toolIdx++;
+      }
+    }
+    // Remaining tool cards
+    while (toolIdx < toolCards.length) {
+      html += renderToolCardHtml(toolCards[toolIdx]);
+      toolIdx++;
+    }
+
+    html += '</div></div>';
+    return html;
+  }
+
+  if (msg.type === 'result') {
+    const cost = msg.cost != null ? `$${msg.cost.toFixed(4)}` : '';
+    const duration = msg.duration != null ? `${(msg.duration / 1000).toFixed(1)}s` : '';
+    return `<div class="result-banner">
+      ${cost ? `<span class="cost">${cost}</span>` : ''}
+      ${duration ? `<span class="duration">${duration}</span>` : ''}
+      <span>Done</span>
+    </div>`;
+  }
+
+  if (msg.type === 'error') {
+    return `<div class="message assistant"><div class="message-bubble" style="border-color:var(--red);color:var(--red);">Error: ${escapeHtml(msg.error)}</div></div>`;
+  }
+
+  return '';
 }
 
-// --- Sidebar-only update (avoids re-rendering terminal) ---
+function renderStreamingHtml() {
+  return `<div class="message assistant"><div class="message-bubble"><span class="streaming-cursor">${renderMarkdown(streamingText)}</span></div></div>`;
+}
 
+function renderToolCardHtml(tool) {
+  const summary = getToolSummary(tool);
+  const body = typeof tool.input === 'string' ? escapeHtml(tool.input) : escapeHtml(JSON.stringify(tool.input, null, 2));
+  return `
+    <div class="tool-card" onclick="this.classList.toggle('expanded')">
+      <div class="tool-card-header">
+        <span class="tool-card-icon">&#9881;</span>
+        <span class="tool-card-name">${escapeHtml(tool.name)}</span>
+        <span class="tool-card-summary">${escapeHtml(summary)}</span>
+        <span class="tool-card-chevron">&#9656;</span>
+      </div>
+      <div class="tool-card-body">${body}</div>
+    </div>
+  `;
+}
+
+function getToolSummary(tool) {
+  if (!tool.input) return '';
+  const inp = typeof tool.input === 'string' ? tool.input : tool.input;
+  if (typeof inp === 'object') {
+    if (inp.file_path) return inp.file_path.replace(/.*\//, '');
+    if (inp.command) return inp.command.slice(0, 60);
+    if (inp.pattern) return inp.pattern;
+    if (inp.query) return inp.query.slice(0, 60);
+  }
+  return '';
+}
+
+function renderMarkdown(text) {
+  try {
+    return marked.parse(text, { breaks: true });
+  } catch {
+    return escapeHtml(text);
+  }
+}
+
+// --- Sidebar-only re-render ---
 function renderSidebar() {
-  if (isDesktop()) {
-    const list = document.getElementById('sidebar-list');
-    if (list) list.innerHTML = sessionListHtml(true);
+  const list = document.getElementById('session-list');
+  if (!list) return;
+  const parent = list.parentElement;
+  if (parent) {
+    parent.innerHTML = renderSidebarHtml();
+    bindSidebarEvents();
   }
 }
 
-// --- Actions ---
-
-function openSession(target) {
-  currentTarget = target;
-  renaming = false;
-  terminalOutput = '';
-  render();
-  if (ws && ws.readyState === 1) {
-    ws.send(JSON.stringify({ type: 'subscribe', target }));
-  }
-}
-
-function goBack() {
-  currentTarget = null;
-  if (ws && ws.readyState === 1) {
-    ws.send(JSON.stringify({ type: 'unsubscribe' }));
-  }
-  fetchSessions();
-}
-
-function renderTerminalOutput() {
-  const el = document.getElementById('terminal-output');
+// --- Messages-only re-render ---
+function renderMessages() {
+  const el = document.getElementById('messages');
   if (!el) return;
-  const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
-  el.innerHTML = terminalOutput;
-  if (wasAtBottom) el.scrollTop = el.scrollHeight;
+
+  const msgs = getMessages(currentSessionId);
+  let html = msgs.map(m => renderMessageHtml(m)).join('');
+  if (isStreaming && streamingText) {
+    html += renderStreamingHtml();
+  }
+  el.innerHTML = html;
+  scrollToBottom();
 }
 
-function updateTerminalStatus() {
-  const session = sessions.find(s => s.target === currentTarget);
-  if (!session) return;
-  const dots = document.querySelectorAll('.terminal-header .status-dot');
-  dots.forEach(d => { d.className = `status-dot ${session.status}`; });
+function scrollToBottom() {
+  const el = document.getElementById('messages');
+  if (el) {
+    requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+  }
 }
 
-function toggleRename() {
-  renaming = !renaming;
-  render();
+// --- Events ---
+
+function bindEvents() {
+  bindSidebarEvents();
+  bindChatEvents();
 }
 
-function saveRename() {
-  const input = document.getElementById('rename-input');
-  if (input && input.value.trim()) {
-    renameSess(currentTarget, input.value.trim());
-    renaming = false;
-    const s = sessions.find(s => s.target === currentTarget);
-    if (s) s.name = input.value.trim();
-    render();
+function bindSidebarEvents() {
+  document.querySelectorAll('.session-item[data-id]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('.session-delete')) return;
+      openSession(el.dataset.id);
+    });
+  });
+
+  document.querySelectorAll('.session-delete[data-delete]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (confirm('Delete this session?')) {
+        deleteSession(el.dataset.delete);
+      }
+    });
+  });
+}
+
+function bindChatEvents() {
+  const input = document.getElementById('chat-input');
+  const sendBtn = document.getElementById('btn-send');
+
+  if (input) {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        submitInput();
+      }
+    });
+
+    // Auto-resize textarea
+    input.addEventListener('input', () => {
+      input.style.height = 'auto';
+      input.style.height = Math.min(input.scrollHeight, 150) + 'px';
+    });
+
+    input.focus();
+  }
+
+  if (sendBtn) {
+    sendBtn.addEventListener('click', submitInput);
   }
 }
 
 function submitInput() {
-  const input = document.getElementById('cmd-input');
-  if (input && input.value.trim()) {
-    sendInput(input.value);
-    input.value = '';
-    input.focus();
+  const input = document.getElementById('chat-input');
+  if (!input) return;
+  const text = input.value.trim();
+  if (!text) return;
+
+  input.value = '';
+  input.style.height = 'auto';
+
+  if (currentSessionId) {
+    sendMessage(text);
+  } else {
+    createSession(text);
   }
 }
 
+async function openSession(id) {
+  currentSessionId = id;
+  showMobileSidebar = false;
+  isStreaming = false;
+  streamingText = '';
+
+  // Load messages from server if we don't have them
+  if (!sessionMessages.has(id) || sessionMessages.get(id).length === 0) {
+    await loadSessionMessages(id);
+  }
+
+  render();
+}
+
+// Global handlers
+window.onNewSession = () => {
+  currentSessionId = null;
+  showMobileSidebar = false;
+  render();
+  const input = document.getElementById('chat-input');
+  if (input) input.focus();
+};
+
+window.onBackMobile = () => {
+  currentSessionId = null;
+  showMobileSidebar = true;
+  render();
+};
+
+window.onAbort = () => {
+  if (currentSessionId) abortSession(currentSessionId);
+};
+
+window.onRenameSession = () => {
+  const session = sessions.find(s => s.id === currentSessionId);
+  if (!session) return;
+  const name = prompt('Rename session:', session.name || '');
+  if (name !== null && name.trim()) {
+    renameSession(currentSessionId, name.trim());
+  }
+};
+
 function escapeHtml(str) {
+  if (typeof str !== 'string') str = String(str ?? '');
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
-}
-
-function timeAgo(ts) {
-  if (!ts) return '';
-  const diff = Math.floor((Date.now() - ts) / 1000);
-  if (diff < 5) return 'just now';
-  if (diff < 60) return diff + 's ago';
-  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
-  return Math.floor(diff / 3600) + 'h ago';
 }
 
 // --- Init ---
@@ -334,8 +614,4 @@ function timeAgo(ts) {
 connectWs();
 fetchSessions();
 
-// Re-render on resize (mobile <-> desktop transition)
 window.addEventListener('resize', () => render());
-
-// Refresh session list periodically
-setInterval(() => fetchSessions(), 5000);

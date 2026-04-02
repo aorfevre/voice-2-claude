@@ -1,11 +1,13 @@
-const express = require('express');
-const http = require('http');
-const { WebSocketServer } = require('ws');
-const path = require('path');
-const tmux = require('./tmux');
-const db = require('./db');
-const status = require('./status');
-const hooks = require('./hooks');
+import express from 'express';
+import http from 'http';
+import { WebSocketServer } from 'ws';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { query } from '@anthropic-ai/claude-agent-sdk';
+import { randomUUID } from 'crypto';
+import * as db from './db.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 const server = http.createServer(app);
@@ -15,183 +17,267 @@ const PORT = process.env.PORT || 9000;
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
-// --- REST API ---
+// Active sessions: sessionId -> { abortController, messages, running, cwd, claudeSessionId }
+const activeSessions = new Map();
 
-app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
-
-app.get('/api/sessions', (req, res) => {
-  const sessions = tmux.listSessions();
-  const names = db.getAllNames();
-  const result = sessions.map(s => ({
-    target: s.target,
-    name: names[s.target] || null,
-    windowName: s.windowName,
-    cwd: s.cwd,
-    status: status.getStatus(s.target).status,
-    preview: tmux.captureLastLine(s.target),
-    lastActivity: status.getStatus(s.target).lastOutputAt || null,
-  }));
-  status.setAllStatuses(sessions.map(s => s.target));
-  res.json(result);
-});
-
-app.get('/api/sessions/:target/output', (req, res) => {
-  const target = decodeURIComponent(req.params.target);
-  const output = tmux.capturePane(target);
-  res.json({ target, output });
-});
-
-app.post('/api/sessions/:target/input', (req, res) => {
-  const target = decodeURIComponent(req.params.target);
-  const { text, special } = req.body;
-  if (special) {
-    tmux.sendSpecialKey(target, special);
-  } else if (text) {
-    tmux.sendKeys(target, text);
-  }
-  status.onUserInput(target);
-  broadcast({ type: 'status', target, status: status.getStatus(target).status });
-  res.json({ ok: true });
-});
-
-app.patch('/api/sessions/:target/name', (req, res) => {
-  const target = decodeURIComponent(req.params.target);
-  const { name } = req.body;
-  db.setName(target, name);
-  broadcast({ type: 'sessions_changed' });
-  res.json({ ok: true });
-});
-
-app.post('/api/sessions/new', (req, res) => {
-  const { type } = req.body; // 'work' or 'perso'
-  const session = type === 'perso' ? 'perso' : 'work';
-  const cmd = type === 'perso'
-    ? 'ccs perso --dangerously-skip-permissions'
-    : 'ccs work --dangerously-skip-permissions';
-
-  try {
-    const sessions = tmux.listSessions();
-    const hasSession = sessions.some(s => s.target.startsWith(session + ':'));
-    if (hasSession) {
-      tmux.createWindow(session, cmd);
-    } else {
-      const { execSync } = require('child_process');
-      execSync(`tmux new-session -d -s "${session}" -c "$HOME/Developers"`, { timeout: 5000 });
-      execSync(`tmux send-keys -t "${session}" "${cmd}" Enter`, { timeout: 5000 });
-    }
-    broadcast({ type: 'sessions_changed' });
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.post('/api/hook', (req, res) => {
-  const event = req.headers['x-hook-event'] || 'unknown';
-  const result = hooks.handleHook(event, req.body);
-  if (result) {
-    broadcast({ type: 'status', target: result.target, status: result.status });
-  }
-  res.json({ ok: true });
-});
-
-// --- WebSocket ---
-
-const subscribers = new Map(); // ws -> { target, interval }
+// WebSocket clients
+const wsClients = new Set();
 
 function broadcast(msg) {
   const data = JSON.stringify(msg);
-  for (const client of wss.clients) {
+  for (const client of wsClients) {
     if (client.readyState === 1) client.send(data);
   }
 }
 
-wss.on('connection', (ws) => {
-  ws.on('message', (raw) => {
-    let msg;
-    try { msg = JSON.parse(raw); } catch (e) { return; }
+function broadcastToSession(sessionId, msg) {
+  const data = JSON.stringify({ ...msg, sessionId });
+  for (const client of wsClients) {
+    if (client.readyState === 1) client.send(data);
+  }
+}
 
-    if (msg.type === 'subscribe') {
-      const prev = subscribers.get(ws);
-      if (prev?.interval) clearInterval(prev.interval);
+// Transform SDK messages for the frontend
+function transformMessage(msg, sessionId) {
+  if (msg.type === 'assistant') {
+    return {
+      type: 'assistant',
+      content: msg.message.content,
+      sessionId,
+    };
+  }
 
-      let lastPlain = '';
-      const interval = setInterval(() => {
-        const plain = tmux.capturePanePlain(msg.target);
-        const hash = simpleHash(plain);
-        status.onOutputChange(msg.target, hash);
-        if (plain !== lastPlain) {
-          lastPlain = plain;
-          const html = tmux.capturePane(msg.target);
-          ws.send(JSON.stringify({ type: 'output', target: msg.target, output: html }));
+  if (msg.type === 'user' && !msg.isReplay) {
+    return {
+      type: 'user',
+      content: msg.message.content,
+      sessionId,
+    };
+  }
+
+  if (msg.type === 'stream_event') {
+    const evt = msg.event;
+    if (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta') {
+      return { type: 'text_delta', text: evt.delta.text, sessionId };
+    }
+    if (evt.type === 'content_block_start' && evt.content_block?.type === 'tool_use') {
+      return { type: 'tool_start', tool: evt.content_block.name, id: evt.content_block.id, sessionId };
+    }
+    if (evt.type === 'content_block_delta' && evt.delta?.type === 'input_json_delta') {
+      return { type: 'tool_delta', json: evt.delta.partial_json, sessionId };
+    }
+    if (evt.type === 'content_block_stop') {
+      return { type: 'block_stop', sessionId };
+    }
+    return null;
+  }
+
+  if (msg.type === 'result') {
+    return {
+      type: 'result',
+      result: msg.result,
+      cost: msg.total_cost_usd,
+      sessionId,
+      duration: msg.duration_ms,
+      session_id: msg.session_id,
+    };
+  }
+
+  return null;
+}
+
+async function runQuery(sessionId, prompt, isResume) {
+  const session = activeSessions.get(sessionId);
+  if (!session) return;
+
+  const abortController = new AbortController();
+  session.abortController = abortController;
+  session.running = true;
+
+  broadcastToSession(sessionId, { type: 'status', status: 'running' });
+
+  try {
+    const opts = {
+      abortController,
+      cwd: session.cwd || '/Users/aorfevre/Developers',
+      allowedTools: ['Read', 'Edit', 'Write', 'Bash', 'Glob', 'Grep', 'Agent'],
+      permissionMode: 'bypassPermissions',
+      allowDangerouslySkipPermissions: true,
+      includePartialMessages: true,
+    };
+
+    if (isResume && session.claudeSessionId) {
+      opts.resume = session.claudeSessionId;
+    }
+
+    const conversation = query({ prompt, options: opts });
+
+    for await (const msg of conversation) {
+      if (abortController.signal.aborted) break;
+
+      const transformed = transformMessage(msg, sessionId);
+      if (transformed) {
+        // Only store full messages (not streaming deltas)
+        if (transformed.type === 'assistant' || transformed.type === 'user' || transformed.type === 'result') {
+          session.messages.push(transformed);
         }
-        ws.send(JSON.stringify({ type: 'status', target: msg.target, status: status.getStatus(msg.target).status }));
-      }, 500);
+        broadcastToSession(sessionId, transformed);
+      }
 
-      subscribers.set(ws, { target: msg.target, interval });
-
-      const html = tmux.capturePane(msg.target);
-      ws.send(JSON.stringify({ type: 'output', target: msg.target, output: html }));
+      // Capture the Claude session ID from assistant or result messages
+      if (msg.session_id) {
+        session.claudeSessionId = msg.session_id;
+      }
     }
-
-    if (msg.type === 'unsubscribe') {
-      const sub = subscribers.get(ws);
-      if (sub?.interval) clearInterval(sub.interval);
-      subscribers.delete(ws);
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      console.error(`Query error for session ${sessionId}:`, err);
+      broadcastToSession(sessionId, {
+        type: 'error',
+        error: err.message,
+      });
     }
+  } finally {
+    session.running = false;
+    session.abortController = null;
+    broadcastToSession(sessionId, { type: 'status', status: 'idle' });
+  }
+}
+
+// --- REST API ---
+
+app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
+
+app.get('/api/sessions', (_req, res) => {
+  const dbSessions = db.getAllSessions();
+  const result = dbSessions.map(s => ({
+    id: s.id,
+    name: s.name,
+    cwd: s.cwd,
+    created_at: s.created_at,
+    running: activeSessions.get(s.id)?.running || false,
+    messageCount: activeSessions.get(s.id)?.messages?.length || 0,
+  }));
+  res.json(result);
+});
+
+app.post('/api/sessions', (req, res) => {
+  const { prompt, name, cwd } = req.body;
+  const sessionId = randomUUID();
+  const sessionCwd = cwd || '/Users/aorfevre/Developers';
+  const sessionName = name || prompt?.slice(0, 50) || 'New Session';
+
+  db.createSession(sessionId, sessionName, sessionCwd);
+
+  activeSessions.set(sessionId, {
+    messages: [],
+    abortController: null,
+    running: false,
+    cwd: sessionCwd,
+    claudeSessionId: null,
   });
 
+  // Start the query in background
+  if (prompt) {
+    runQuery(sessionId, prompt, false);
+  }
+
+  broadcast({ type: 'sessions_changed' });
+  res.json({ id: sessionId, name: sessionName });
+});
+
+app.post('/api/sessions/:id/message', (req, res) => {
+  const { id } = req.params;
+  const { prompt } = req.body;
+
+  if (!prompt) {
+    return res.status(400).json({ error: 'prompt is required' });
+  }
+
+  let session = activeSessions.get(id);
+  if (!session) {
+    const dbSession = db.getSession(id);
+    if (!dbSession) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+    session = {
+      messages: [],
+      abortController: null,
+      running: false,
+      cwd: dbSession.cwd,
+      claudeSessionId: null,
+    };
+    activeSessions.set(id, session);
+  }
+
+  if (session.running) {
+    return res.status(409).json({ error: 'Session is currently running' });
+  }
+
+  // Add user message
+  const userMsg = { type: 'user', content: [{ type: 'text', text: prompt }], sessionId: id };
+  session.messages.push(userMsg);
+  broadcastToSession(id, userMsg);
+
+  // Run query in background (resume if we have a Claude session ID)
+  runQuery(id, prompt, !!session.claudeSessionId);
+
+  res.json({ ok: true });
+});
+
+app.patch('/api/sessions/:id/name', (req, res) => {
+  const { id } = req.params;
+  const { name } = req.body;
+  db.setName(id, name);
+  broadcast({ type: 'sessions_changed' });
+  res.json({ ok: true });
+});
+
+app.delete('/api/sessions/:id', (req, res) => {
+  const { id } = req.params;
+  const session = activeSessions.get(id);
+  if (session?.abortController) {
+    session.abortController.abort();
+  }
+  activeSessions.delete(id);
+  db.deleteSession(id);
+  broadcast({ type: 'sessions_changed' });
+  res.json({ ok: true });
+});
+
+app.get('/api/sessions/:id/messages', (req, res) => {
+  const { id } = req.params;
+  const session = activeSessions.get(id);
+  if (!session) {
+    return res.json({ messages: [], running: false });
+  }
+  res.json({ messages: session.messages, running: session.running });
+});
+
+// --- WebSocket ---
+
+wss.on('connection', (ws) => {
+  wsClients.add(ws);
+
   ws.on('close', () => {
-    const sub = subscribers.get(ws);
-    if (sub?.interval) clearInterval(sub.interval);
-    subscribers.delete(ws);
+    wsClients.delete(ws);
+  });
+
+  ws.on('message', (raw) => {
+    let msg;
+    try { msg = JSON.parse(raw); } catch { return; }
+
+    if (msg.type === 'abort' && msg.sessionId) {
+      const session = activeSessions.get(msg.sessionId);
+      if (session?.abortController) {
+        session.abortController.abort();
+      }
+    }
   });
 });
 
-// Session list polling — broadcasts updated sessions to all clients
-let lastSessionsJson = '';
-setInterval(() => {
-  if (wss.clients.size === 0) return;
-  const sessionList = tmux.listSessions();
-  const names = db.getAllNames();
-
-  const subscribedTargets = new Set();
-  for (const [, sub] of subscribers) subscribedTargets.add(sub.target);
-
-  for (const s of sessionList) {
-    if (!subscribedTargets.has(s.target)) {
-      const plain = tmux.capturePanePlain(s.target);
-      status.onOutputChange(s.target, simpleHash(plain));
-    }
-  }
-
-  status.setAllStatuses(sessionList.map(s => s.target));
-
-  const result = sessionList.map(s => ({
-    target: s.target,
-    name: names[s.target] || null,
-    windowName: s.windowName,
-    cwd: s.cwd,
-    status: status.getStatus(s.target).status,
-    preview: tmux.captureLastLine(s.target),
-    lastActivity: status.getStatus(s.target).lastOutputAt || null,
-  }));
-
-  const json = JSON.stringify(result);
-  if (json !== lastSessionsJson) {
-    lastSessionsJson = json;
-    broadcast({ type: 'sessions', sessions: result });
-  }
-}, 2000);
-
-function simpleHash(str) {
-  let h = 0;
-  for (let i = 0; i < str.length; i++) {
-    h = ((h << 5) - h + str.charCodeAt(i)) | 0;
-  }
-  return h;
-}
+// --- Start ---
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Terminal Remote running on http://0.0.0.0:${PORT}`);
+  console.log(`Claude Agent Server running on http://0.0.0.0:${PORT}`);
 });

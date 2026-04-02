@@ -1,7 +1,9 @@
-const Database = require('better-sqlite3');
-const path = require('path');
-const fs = require('fs');
+import Database from 'better-sqlite3';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = path.join(__dirname, '..', 'data');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
@@ -10,31 +12,29 @@ db.pragma('journal_mode = WAL');
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS sessions (
-    tmux_target TEXT PRIMARY KEY,
+    id TEXT PRIMARY KEY,
     name TEXT,
+    cwd TEXT DEFAULT '/Users/aorfevre/Developers',
     created_at TEXT DEFAULT (datetime('now'))
   )
 `);
 
-function getName(target) {
-  const row = db.prepare('SELECT name FROM sessions WHERE tmux_target = ?').get(target);
-  return row ? row.name : null;
+export function createSession(id, name, cwd = '/Users/aorfevre/Developers') {
+  db.prepare('INSERT OR REPLACE INTO sessions (id, name, cwd) VALUES (?, ?, ?)').run(id, name, cwd);
 }
 
-function setName(target, name) {
-  db.prepare('INSERT INTO sessions (tmux_target, name) VALUES (?, ?) ON CONFLICT(tmux_target) DO UPDATE SET name = ?')
-    .run(target, name, name);
+export function getSession(id) {
+  return db.prepare('SELECT * FROM sessions WHERE id = ?').get(id);
 }
 
-function removeSession(target) {
-  db.prepare('DELETE FROM sessions WHERE tmux_target = ?').run(target);
+export function getAllSessions() {
+  return db.prepare('SELECT * FROM sessions ORDER BY created_at DESC').all();
 }
 
-function getAllNames() {
-  const rows = db.prepare('SELECT tmux_target, name FROM sessions WHERE name IS NOT NULL').all();
-  const map = {};
-  for (const row of rows) map[row.tmux_target] = row.name;
-  return map;
+export function setName(id, name) {
+  db.prepare('UPDATE sessions SET name = ? WHERE id = ?').run(name, id);
 }
 
-module.exports = { getName, setName, removeSession, getAllNames };
+export function deleteSession(id) {
+  db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
+}
