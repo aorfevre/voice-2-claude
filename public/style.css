@@ -542,26 +542,50 @@ html, body {
 /* --- Project Picker --- */
 .project-picker {
   flex: 1;
-  padding: 40px 20px;
+  padding: 30px 20px;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .project-picker h2 {
   font-size: 20px;
   font-weight: 700;
-  margin-bottom: 4px;
+  margin-bottom: 12px;
 }
 
-.project-picker .subtitle {
+.project-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+}
+
+.btn-browse-up {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--blue);
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.btn-browse-up:hover { background: var(--bg-tertiary); }
+
+.breadcrumb-path {
+  font-size: 13px;
   color: var(--text-secondary);
-  font-size: 14px;
-  margin-bottom: 20px;
 }
 
 .project-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 8px;
+  flex: 1;
 }
 
 .project-item {
@@ -581,7 +605,21 @@ html, body {
   background: var(--bg-tertiary);
 }
 
-.project-icon { font-size: 18px; }
+.project-item.is-repo {
+  border-color: rgba(63, 185, 80, 0.3);
+}
+
+.project-item.is-repo:hover {
+  border-color: var(--green);
+}
+
+.project-icon { font-size: 18px; flex-shrink: 0; }
+
+.project-info {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 
 .project-name {
   font-size: 14px;
@@ -589,6 +627,39 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.project-tag {
+  font-size: 10px;
+  color: var(--green);
+  font-weight: 600;
+}
+
+.project-tag.folder {
+  color: var(--text-muted);
+}
+
+.project-picker-actions {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.btn-pick-current {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 10px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  width: 100%;
+  text-align: left;
+}
+
+.btn-pick-current:hover {
+  border-color: var(--blue);
+  color: var(--text);
 }
 
 /* --- Mobile --- */

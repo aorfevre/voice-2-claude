@@ -176,20 +176,28 @@ app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 
 app.get('/api/usage', (_req, res) => res.json(profileUsage));
 
-app.get('/api/projects', (_req, res) => {
+app.get('/api/projects', (req, res) => {
   const devDir = path.join(process.env.HOME, 'Developers');
+  const browseDir = req.query.path || devDir;
+
+  // Security: only allow browsing under ~/Developers
+  if (!browseDir.startsWith(devDir)) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+
   try {
-    const entries = fs.readdirSync(devDir, { withFileTypes: true });
-    const projects = entries
-      .filter(e => e.isDirectory() && !e.name.startsWith('.'))
+    const entries = fs.readdirSync(browseDir, { withFileTypes: true });
+    const dirs = entries
+      .filter(e => e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules')
       .map(e => ({
         name: e.name,
-        path: path.join(devDir, e.name),
+        path: path.join(browseDir, e.name),
+        hasGit: fs.existsSync(path.join(browseDir, e.name, '.git')),
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
-    res.json(projects);
+    res.json({ current: browseDir, parent: browseDir !== devDir ? path.dirname(browseDir) : null, dirs });
   } catch {
-    res.json([]);
+    res.json({ current: browseDir, parent: path.dirname(browseDir), dirs: [] });
   }
 });
 

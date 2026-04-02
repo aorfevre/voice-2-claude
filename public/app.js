@@ -414,17 +414,29 @@ function renderChatHtml() {
 function renderEmptyHtml() {
   if (showProjectPicker) {
     const label = pendingProfile.charAt(0).toUpperCase() + pendingProfile.slice(1);
+    const breadcrumb = projectData.current.replace(/^\/Users\/[^/]+\/Developers\/?/, '') || 'Developers';
+
     return `
       <div class="project-picker">
         <h2>New ${label} session</h2>
-        <p class="subtitle">Select a project:</p>
+        <div class="project-breadcrumb">
+          ${projectData.parent ? `<button class="btn-browse-up" onclick="onBrowseDir('${projectData.parent}')">&#8592; Back</button>` : ''}
+          <span class="breadcrumb-path">📁 ${escapeHtml(breadcrumb)}</span>
+        </div>
         <div class="project-list">
-          ${projects.map(p => `
-            <div class="project-item" onclick="onPickProject('${p.path}')">
-              <span class="project-icon">📁</span>
-              <span class="project-name">${escapeHtml(p.name)}</span>
+          ${projectData.dirs.map(p => `
+            <div class="project-item ${p.hasGit ? 'is-repo' : ''}" onclick="${p.hasGit ? `onPickProject('${p.path}')` : `onBrowseDir('${p.path}')`}">
+              <span class="project-icon">${p.hasGit ? '📦' : '📁'}</span>
+              <div class="project-info">
+                <span class="project-name">${escapeHtml(p.name)}</span>
+                ${p.hasGit ? '<span class="project-tag">git repo</span>' : '<span class="project-tag folder">folder</span>'}
+              </div>
             </div>
           `).join('')}
+          ${projectData.dirs.length === 0 ? '<div style="color:var(--text-muted);padding:20px;text-align:center;">No subdirectories</div>' : ''}
+        </div>
+        <div class="project-picker-actions">
+          <button class="btn-pick-current" onclick="onPickProject('${projectData.current}')">Use this folder: ${escapeHtml(breadcrumb)}</button>
         </div>
       </div>
     `;
@@ -649,18 +661,29 @@ async function openSession(id) {
 }
 
 // Global handlers
-let projects = [];
+let projectData = { current: '', parent: null, dirs: [] };
 let showProjectPicker = false;
+
+async function fetchProjects(dir) {
+  try {
+    const url = dir ? `/api/projects?path=${encodeURIComponent(dir)}` : '/api/projects';
+    const res = await fetch(url);
+    projectData = await res.json();
+  } catch {
+    projectData = { current: '', parent: null, dirs: [] };
+  }
+}
 
 window.onNewSession = async (profile) => {
   pendingProfile = profile || 'perso';
-  // Fetch projects and show picker
-  try {
-    const res = await fetch('/api/projects');
-    projects = await res.json();
-  } catch { projects = []; }
+  await fetchProjects();
   showProjectPicker = true;
   showMobileSidebar = false;
+  render();
+};
+
+window.onBrowseDir = async (dir) => {
+  await fetchProjects(dir);
   render();
 };
 
