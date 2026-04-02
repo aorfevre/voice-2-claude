@@ -452,27 +452,24 @@ function renderMessageHtml(msg) {
   }
 
   if (msg.type === 'assistant' || msg.type === 'assistant-streaming') {
-    let html = '<div class="message assistant"><div class="message-bubble">';
     const textParts = msg.textParts || [];
     const toolCards = msg.toolCards || [];
 
-    let toolIdx = 0;
-    for (let i = 0; i < textParts.length; i++) {
-      if (textParts[i]) {
-        html += renderMarkdown(textParts[i]);
-      }
-      // Render any tool cards that appeared after this text part
-      while (toolIdx < toolCards.length && toolIdx <= i) {
-        html += renderToolCardHtml(toolCards[toolIdx]);
-        toolIdx++;
-      }
-    }
-    // Remaining tool cards
-    while (toolIdx < toolCards.length) {
-      html += renderToolCardHtml(toolCards[toolIdx]);
-      toolIdx++;
+    // Combine all text parts
+    const fullText = textParts.filter(t => t).join('\n\n');
+
+    // If there's only tools and no text, show a compact tool summary
+    if (!fullText && toolCards.length > 0) {
+      const toolNames = [...new Set(toolCards.map(t => t.name))];
+      return `<div class="tool-summary">${toolNames.map(n => `<span class="tool-pill">${escapeHtml(n)}</span>`).join('')} <span class="tool-count">${toolCards.length} actions</span></div>`;
     }
 
+    // If there's text, show it with an optional compact tool count
+    let html = '<div class="message assistant"><div class="message-bubble">';
+    if (toolCards.length > 0) {
+      html += `<div class="tool-summary-inline">${toolCards.length} tool${toolCards.length > 1 ? 's' : ''} used</div>`;
+    }
+    html += renderMarkdown(fullText);
     html += '</div></div>';
     return html;
   }
